@@ -1012,6 +1012,7 @@ def _read_and_validate_teardown(
     sidecar, _sidecar_raw = _read_hashed_json(
         expected_path, descriptor["sha256"], "teardown evidence"
     )
+    sidecar_schema_version = sidecar.get("schema_version")
     expected_fields = {
         "schema_version",
         "run_id",
@@ -1025,6 +1026,8 @@ def _read_and_validate_teardown(
         "socket_census",
         "shared_lock",
     }
+    if sidecar_schema_version == 2:
+        expected_fields.add("teardown_wait")
     if comparison_identity is not None:
         expected_fields.add("comparison_identity")
     runner_source_sha256 = hashlib.sha256(
@@ -1033,7 +1036,7 @@ def _read_and_validate_teardown(
     if (
         set(sidecar) != expected_fields
         or type(sidecar.get("schema_version")) is not int
-        or sidecar.get("schema_version") != 1
+        or sidecar_schema_version not in (1, 2)
         or sidecar.get("run_id") != row_run_id
         or sidecar.get("preflight_run_id") != preflight_run_id
         or sidecar.get("source_sha") != source_sha
@@ -1049,6 +1052,16 @@ def _read_and_validate_teardown(
         or runner._BOOKING_ID.fullmatch(sidecar.get("booking_id", "")) is None
     ):
         raise RetainedEvidenceError("retained teardown evidence identity differs")
+
+    teardown_wait: Mapping[str, Any] | None = None
+    if sidecar_schema_version == 2:
+        teardown_wait = sidecar.get("teardown_wait")
+        _validate_teardown_wait_evidence(
+            teardown_wait,
+            sidecar=sidecar,
+            evidence=evidence,
+            runner=runner,
+        )
 
     worker_stop = sidecar.get("worker_stop")
     worker_fields = {
@@ -1147,6 +1160,16 @@ def _read_and_validate_teardown(
             raise RetainedEvidenceError(
                 "retained teardown port %d is occupied or unobservable" % port
             )
+    if sidecar_schema_version == 2 and (
+        teardown_wait is None
+        or not _strict_json_equal(
+            observations,
+            teardown_wait["final"]["port_observations"],
+        )
+    ):
+        raise RetainedEvidenceError(
+            "retained teardown final bind observations contradict wait evidence"
+        )
 
     census_reference = sidecar.get("socket_census")
     census = evidence.get("process_census")
@@ -1189,6 +1212,24 @@ def _read_and_validate_teardown(
         or _active_listener_pids(rows, 8370)
     ):
         raise RetainedEvidenceError("retained teardown census has an active listener or is unobservable")
+
+    wait_sha256 = (
+        hashlib.sha256(
+            json.dumps(
+                dict(teardown_wait),
+                ensure_ascii=True,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("ascii")
+        ).hexdigest()
+        if teardown_wait is not None
+        else None
+    )
+    final_wait_census = (
+        teardown_wait.get("final_process_census")
+        if isinstance(teardown_wait, Mapping)
+        else None
+    )
 
     shared_lock = sidecar.get("shared_lock")
     lock_fields = {
@@ -1233,6 +1274,8 @@ def _read_and_validate_teardown(
         or booking_record.get("lifecycle") != evidence.get("lifecycle")
         or booking_record.get("planned_row_id") != evidence.get("planned_row_id")
         or booking_record.get("booking_id") != sidecar.get("booking_id")
+        or release_record.get("teardown_evidence_schema_version")
+        != sidecar_schema_version
         or release_record.get("evidence_path") != evidence_path
         or release_record.get("teardown_evidence_path") != expected_path
         or release_record.get("server_stopped") is not True
@@ -1245,6 +1288,21 @@ def _read_and_validate_teardown(
         != census_reference.get("path")
         or release_record.get("after_teardown_socket_sample_sha256")
         != census_reference.get("sha256")
+        or (
+            sidecar_schema_version == 2
+            and (
+                release_record.get("teardown_wait_schema_version") != 1
+                or release_record.get("teardown_wait_sha256") != wait_sha256
+                or release_record.get("teardown_wait_elapsed_monotonic_ns")
+                != teardown_wait.get("elapsed_monotonic_ns")
+                or release_record.get("teardown_wait_completed_monotonic_ns")
+                != teardown_wait.get("completed_monotonic_ns")
+                or release_record.get(
+                    "after_teardown_socket_sample_observed_monotonic_ns"
+                )
+                != final_wait_census.get("observed_monotonic_ns")
+            )
+        )
     ):
         raise RetainedEvidenceError("retained shared lock release record identity differs")
     actual_record, durable_digest = _read_durable_release_record(
@@ -1265,6 +1323,281 @@ def _read_and_validate_teardown(
     if not _strict_json_equal(summary, expected_summary):
         raise RetainedEvidenceError("retained teardown summary contradicts independent proof")
     return {"sha256": descriptor["sha256"], "durable_record_sha256": durable_digest}
+
+
+def _validate_teardown_wait_evidence(
+    value: Any,
+    *,
+    sidecar: Mapping[str, Any],
+    evidence: Mapping[str, Any],
+    runner: Any,
+) -> None:
+    fields = {
+        "schema_version",
+        "clock",
+        "lock_held",
+        "status",
+        "failure_code",
+        "timeout_ns",
+        "poll_interval_ns",
+        "started_monotonic_ns",
+        "completed_monotonic_ns",
+        "elapsed_monotonic_ns",
+        "attempts",
+        "initial",
+        "final",
+        "final_process_census",
+    }
+    if not isinstance(value, Mapping) or set(value) != fields:
+        raise RetainedEvidenceError("retained teardown wait evidence is malformed")
+    started_ns = value.get("started_monotonic_ns")
+    completed_ns = value.get("completed_monotonic_ns")
+    elapsed_ns = value.get("elapsed_monotonic_ns")
+    attempts = value.get("attempts")
+    if (
+        type(value.get("schema_version")) is not int
+        or value.get("schema_version") != 1
+        or value.get("clock") != "time.monotonic_ns"
+        or value.get("lock_held") is not True
+        or value.get("status") != "ports_free"
+        or value.get("failure_code") is not None
+        or type(value.get("timeout_ns")) is not int
+        or value.get("timeout_ns") != 75_000_000_000
+        or type(value.get("poll_interval_ns")) is not int
+        or value.get("poll_interval_ns") != 1_000_000_000
+        or type(started_ns) is not int
+        or started_ns < 0
+        or type(completed_ns) is not int
+        or completed_ns < started_ns
+        or type(elapsed_ns) is not int
+        or elapsed_ns != completed_ns - started_ns
+        or elapsed_ns > value.get("timeout_ns")
+        or not isinstance(attempts, list)
+        or not 1 <= len(attempts) <= 75
+    ):
+        raise RetainedEvidenceError("retained teardown wait identity is invalid")
+
+    attempt_fields = {
+        "started_monotonic_ns",
+        "completed_monotonic_ns",
+        "listener_census",
+        "port_observations",
+    }
+    previous_attempt: Mapping[str, Any] | None = None
+    for attempt in attempts:
+        if not isinstance(attempt, Mapping) or set(attempt) != attempt_fields:
+            raise RetainedEvidenceError("retained teardown wait attempt is malformed")
+        attempt_started_ns = attempt.get("started_monotonic_ns")
+        attempt_completed_ns = attempt.get("completed_monotonic_ns")
+        if (
+            type(attempt_started_ns) is not int
+            or attempt_started_ns < started_ns
+            or attempt_started_ns > completed_ns
+            or type(attempt_completed_ns) is not int
+            or attempt_completed_ns < attempt_started_ns
+            or attempt_completed_ns > completed_ns
+        ):
+            raise RetainedEvidenceError("retained teardown wait timing is invalid")
+        if previous_attempt is not None:
+            previous_started_ns = previous_attempt["started_monotonic_ns"]
+            previous_completed_ns = previous_attempt["completed_monotonic_ns"]
+            if (
+                attempt_started_ns - previous_started_ns < 1_000_000_000
+                or attempt_started_ns < previous_completed_ns
+            ):
+                raise RetainedEvidenceError(
+                    "retained teardown wait polling exceeded its bound"
+                )
+
+        listener_census = attempt.get("listener_census")
+        port_observations = attempt.get("port_observations")
+        if (
+            not isinstance(listener_census, Mapping)
+            or set(listener_census) != {"8360", "8370"}
+            or not isinstance(port_observations, Mapping)
+            or set(port_observations) != {"8360", "8370"}
+        ):
+            raise RetainedEvidenceError(
+                "retained teardown wait observations are incomplete"
+            )
+        for port in (8360, 8370):
+            census = listener_census[str(port)]
+            _validate_teardown_listener_census(census, port=port, runner=runner)
+            if census.get("listener_pids") != []:
+                raise RetainedEvidenceError(
+                    "retained teardown wait observed a listener"
+                )
+            kind = runner._teardown_port_observation_kind(
+                port_observations[str(port)], port
+            )
+            if kind not in ("free", "occupied"):
+                raise RetainedEvidenceError(
+                    "retained teardown wait bind observation is incomplete"
+                )
+        if previous_attempt is not None and not any(
+            runner._teardown_port_observation_kind(
+                previous_attempt["port_observations"][str(port)], port
+            )
+            == "occupied"
+            for port in (8360, 8370)
+        ):
+            raise RetainedEvidenceError(
+                "retained teardown wait retried without an occupied bind"
+            )
+        previous_attempt = attempt
+
+    if (
+        not _strict_json_equal(value.get("initial"), attempts[0])
+        or not _strict_json_equal(value.get("final"), attempts[-1])
+        or attempts[-1].get("completed_monotonic_ns") != completed_ns
+        or any(
+            runner._teardown_port_observation_kind(
+                attempts[-1]["port_observations"][str(port)], port
+            )
+            != "free"
+            for port in (8360, 8370)
+        )
+    ):
+        raise RetainedEvidenceError(
+            "retained teardown wait initial or final proof differs"
+        )
+
+    final_census = value.get("final_process_census")
+    final_census_fields = {
+        "phase",
+        "path",
+        "sha256",
+        "observed",
+        "listener_pids",
+        "observed_monotonic_ns",
+    }
+    census_reference = sidecar.get("socket_census")
+    process_census = evidence.get("process_census")
+    samples = (
+        process_census.get("socket_pid_samples")
+        if isinstance(process_census, Mapping)
+        else None
+    )
+    final_sample = (
+        samples[2]
+        if isinstance(samples, list)
+        and len(samples) == 3
+        and isinstance(samples[2], Mapping)
+        else None
+    )
+    if (
+        not isinstance(final_census, Mapping)
+        or set(final_census) != final_census_fields
+        or final_census.get("phase") != "after_teardown"
+        or not runner._valid_evidence_path(final_census.get("path"))
+        or not isinstance(final_census.get("sha256"), str)
+        or _SHA256.fullmatch(final_census.get("sha256", "")) is None
+        or final_census.get("observed") is not True
+        or final_census.get("listener_pids") != []
+        or type(final_census.get("observed_monotonic_ns")) is not int
+        or final_census["observed_monotonic_ns"] <= completed_ns
+        or not isinstance(census_reference, Mapping)
+        or final_census.get("path") != census_reference.get("path")
+        or final_census.get("sha256") != census_reference.get("sha256")
+        or final_census.get("observed") is not census_reference.get("observed")
+        or final_census.get("listener_pids")
+        != census_reference.get("listener_pids")
+        or not isinstance(final_sample, Mapping)
+        or final_sample.get("phase") != "after_teardown"
+        or final_sample.get("evidence_path") != final_census.get("path")
+        or final_sample.get("evidence_sha256") != final_census.get("sha256")
+        or final_sample.get("observed") is not True
+        or final_sample.get("listener_pids") != []
+    ):
+        raise RetainedEvidenceError(
+            "retained teardown final census is missing or predates the wait"
+        )
+
+
+def _validate_teardown_listener_census(
+    value: Any,
+    *,
+    port: int,
+    runner: Any,
+) -> None:
+    fields = {
+        "schema_version",
+        "method",
+        "port",
+        "observer",
+        "census_method",
+        "command",
+        "returncode",
+        "stdout_byte_count",
+        "stdout_sha256",
+        "identity_sha256",
+        "observed",
+        "parseable",
+        "listener_pids",
+        "failure_code",
+    }
+    command = [
+        runner.LSOF_EXECUTABLE,
+        "-nP",
+        "-iTCP:%d" % port,
+        "-sTCP:LISTEN",
+    ]
+    identity = {
+        "observer": "lsof",
+        "census_method": "tcp-listen",
+        "port": port,
+        "command": command,
+        "returncode": value.get("returncode")
+        if isinstance(value, Mapping)
+        else None,
+        "stdout_byte_count": value.get("stdout_byte_count")
+        if isinstance(value, Mapping)
+        else None,
+        "stdout_sha256": value.get("stdout_sha256")
+        if isinstance(value, Mapping)
+        else None,
+    }
+    raw_identity = json.dumps(
+        identity, ensure_ascii=True, sort_keys=True, separators=(",", ":")
+    ).encode("ascii")
+    pids = value.get("listener_pids") if isinstance(value, Mapping) else None
+    if (
+        not isinstance(value, Mapping)
+        or set(value) != fields
+        or type(value.get("schema_version")) is not int
+        or value.get("schema_version") != 1
+        or value.get("method") != "lsof-tcp-listen"
+        or type(value.get("port")) is not int
+        or value.get("port") != port
+        or value.get("observer") != "lsof"
+        or value.get("census_method") != "tcp-listen"
+        or value.get("command") != command
+        or type(value.get("returncode")) is not int
+        or value.get("returncode") not in (0, 1)
+        or type(value.get("stdout_byte_count")) is not int
+        or value.get("stdout_byte_count") < 0
+        or not isinstance(value.get("stdout_sha256"), str)
+        or _SHA256.fullmatch(value.get("stdout_sha256", "")) is None
+        or value.get("identity_sha256")
+        != hashlib.sha256(raw_identity).hexdigest()
+        or value.get("observed") is not True
+        or value.get("parseable") is not True
+        or not isinstance(pids, list)
+        or any(type(pid) is not int or pid <= 0 for pid in pids)
+        or pids != sorted(set(pids))
+        or value.get("failure_code") is not None
+        or (
+            value.get("returncode") == 1
+            and value.get("stdout_byte_count") != 0
+        )
+        or (
+            value.get("returncode") == 0
+            and value.get("stdout_byte_count") == 0
+        )
+    ):
+        raise RetainedEvidenceError(
+            "retained teardown listener census identity is malformed"
+        )
 
 
 def _active_listener_pids(rows: list[Any], port: int) -> list[int]:

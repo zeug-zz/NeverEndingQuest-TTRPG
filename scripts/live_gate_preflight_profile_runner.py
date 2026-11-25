@@ -32,7 +32,7 @@ import subprocess
 import sys
 import time
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -53,6 +53,8 @@ LSOF_EXECUTABLE = "/usr/sbin/lsof"
 STARTUP_TIMEOUT_SECONDS = 60.0
 STOP_TIMEOUT_SECONDS = 12.0
 OBSERVER_TIMEOUT_SECONDS = 3.0
+TEARDOWN_PORT_WAIT_TIMEOUT_NS = 75_000_000_000
+TEARDOWN_PORT_WAIT_POLL_INTERVAL_NS = 1_000_000_000
 MAX_OBSERVER_OUTPUT_BYTES = 32768
 MAX_NETSTAT_OUTPUT_BYTES = 8_000_000
 MAX_NETSTAT_ROWS = 100_000
@@ -2244,7 +2246,7 @@ def _exclusive_bind_port_observation(port: int) -> dict[str, Any]:
     bind_attempted = False
     bind_succeeded = False
     socket_closed: bool | None = None
-    error: OSError | None = None
+    error: Exception | None = None
     if type(port) is not int or not 1 <= port <= 65535:
         return {
             "schema_version": 1,
@@ -2270,19 +2272,23 @@ def _exclusive_bind_port_observation(port: int) -> dict[str, Any]:
         bind_attempted = True
         probe.bind(("127.0.0.1", port))
         bind_succeeded = True
-    except OSError as exc:
+    except Exception as exc:
         error = exc
     finally:
         if probe is not None:
             try:
                 probe.close()
                 socket_closed = True
-            except OSError as exc:
+            except Exception as exc:
                 error = exc
                 socket_closed = False
     if bind_succeeded and socket_closed is True:
         result = "free"
-    elif error is not None and error.errno == errno.EADDRINUSE and socket_closed is True:
+    elif (
+        error is not None
+        and getattr(error, "errno", None) == errno.EADDRINUSE
+        and socket_closed is True
+    ):
         result = "occupied"
     else:
         result = "unobservable"
@@ -2299,7 +2305,7 @@ def _exclusive_bind_port_observation(port: int) -> dict[str, Any]:
         "bind_succeeded": bind_succeeded,
         "socket_closed": socket_closed,
         "result": result,
-        "error_errno": error.errno if error is not None else None,
+        "error_errno": getattr(error, "errno", None) if error is not None else None,
         "error_type": type(error).__name__ if error is not None else None,
         "observation_complete": result in ("free", "occupied"),
     }
@@ -2308,6 +2314,338 @@ def _exclusive_bind_port_observation(port: int) -> dict[str, Any]:
 def _required_port_observations() -> dict[int, dict[str, Any]]:
     return {
         port: _exclusive_bind_port_observation(port) for port in REQUIRED_PORTS
+    }
+
+
+def _teardown_port_observation_kind(value: Any, port: int) -> str | None:
+    """Classify only complete exclusive-bind evidence for one required port."""
+    fields = {
+        "schema_version",
+        "method",
+        "transport",
+        "address",
+        "port",
+        "reuse_address",
+        "observed_at_ns",
+        "socket_created",
+        "bind_attempted",
+        "bind_succeeded",
+        "socket_closed",
+        "result",
+        "error_errno",
+        "error_type",
+        "observation_complete",
+    }
+    if (
+        not isinstance(value, Mapping)
+        or set(value) != fields
+        or type(value.get("schema_version")) is not int
+        or value.get("schema_version") != 1
+        or value.get("method") != "exclusive-bind-close"
+        or value.get("transport") != "tcp"
+        or value.get("address") != "127.0.0.1"
+        or type(value.get("port")) is not int
+        or value.get("port") != port
+        or value.get("reuse_address") is not False
+        or type(value.get("observed_at_ns")) is not int
+        or value.get("observed_at_ns") <= 0
+        or value.get("socket_created") is not True
+        or value.get("bind_attempted") is not True
+        or value.get("socket_closed") is not True
+        or value.get("observation_complete") is not True
+    ):
+        return None
+    if (
+        value.get("result") == "free"
+        and value.get("bind_succeeded") is True
+        and value.get("error_errno") is None
+        and value.get("error_type") is None
+    ):
+        return "free"
+    if (
+        value.get("result") == "occupied"
+        and value.get("bind_succeeded") is False
+        and value.get("error_errno") == errno.EADDRINUSE
+        and isinstance(value.get("error_type"), str)
+        and bool(value.get("error_type"))
+    ):
+        return "occupied"
+    return None
+
+
+def _unobserved_listener_census(
+    port: int, failure_code: str
+) -> dict[str, Any]:
+    command = [
+        LSOF_EXECUTABLE,
+        "-nP",
+        "-iTCP:%d" % port,
+        "-sTCP:LISTEN",
+    ]
+    identity = {
+        "observer": "lsof",
+        "census_method": "tcp-listen",
+        "port": port,
+        "command": command,
+        "returncode": None,
+        "stdout_byte_count": 0,
+        "stdout_sha256": hashlib.sha256(b"").hexdigest(),
+    }
+    return {
+        "schema_version": 1,
+        "method": "lsof-tcp-listen",
+        **identity,
+        "identity_sha256": _canonical_json_sha256(identity),
+        "observed": False,
+        "parseable": False,
+        "listener_pids": [],
+        "failure_code": failure_code,
+    }
+
+
+def _wait_for_teardown_ports(
+    *,
+    lock_held: bool,
+    monotonic_ns: Callable[[], int],
+    sleeper: Callable[[float], None],
+) -> dict[str, Any]:
+    """Wait at most 75 seconds for both exclusive binds under the held lock."""
+    wait: dict[str, Any] = {
+        "schema_version": 1,
+        "clock": "time.monotonic_ns",
+        "lock_held": lock_held is True,
+        "status": "failed",
+        "failure_code": None,
+        "timeout_ns": TEARDOWN_PORT_WAIT_TIMEOUT_NS,
+        "poll_interval_ns": TEARDOWN_PORT_WAIT_POLL_INTERVAL_NS,
+        "started_monotonic_ns": None,
+        "completed_monotonic_ns": None,
+        "elapsed_monotonic_ns": None,
+        "attempts": [],
+        "initial": None,
+        "final": None,
+        "final_process_census": None,
+    }
+    if type(lock_held) is not bool or not lock_held:
+        wait["failure_code"] = "teardown_wait_lock_not_held"
+        return wait
+
+    try:
+        started_ns = monotonic_ns()
+    except Exception as exc:
+        wait["failure_code"] = "teardown_monotonic_clock_failed_" + type(exc).__name__
+        return wait
+    if type(started_ns) is not int or started_ns < 0:
+        wait["failure_code"] = "teardown_monotonic_clock_invalid"
+        return wait
+    deadline_ns = started_ns + TEARDOWN_PORT_WAIT_TIMEOUT_NS
+    wait["started_monotonic_ns"] = started_ns
+    last_attempt_started_ns: int | None = None
+    last_clock_ns = started_ns
+    def finish(code: str | None, at_ns: int) -> dict[str, Any]:
+        elapsed_ns = at_ns - started_ns
+        if elapsed_ns < 0:
+            code = code or "teardown_monotonic_clock_invalid"
+            elapsed_ns = 0
+        wait["completed_monotonic_ns"] = at_ns
+        wait["elapsed_monotonic_ns"] = elapsed_ns
+        wait["status"] = "ports_free" if code is None else "failed"
+        wait["failure_code"] = code
+        attempts = wait["attempts"]
+        wait["initial"] = attempts[0] if attempts else None
+        wait["final"] = attempts[-1] if attempts else None
+        return wait
+
+    while True:
+        try:
+            now_ns = monotonic_ns()
+        except Exception as exc:
+            failure_code = "teardown_monotonic_clock_failed_" + type(exc).__name__
+            return finish(failure_code, last_clock_ns)
+        if type(now_ns) is not int or now_ns < last_clock_ns:
+            return finish("teardown_monotonic_clock_invalid", last_clock_ns)
+        last_clock_ns = now_ns
+        if now_ns >= deadline_ns:
+            return finish("teardown_port_wait_timeout", now_ns)
+
+        if last_attempt_started_ns is not None:
+            next_poll_ns = (
+                last_attempt_started_ns + TEARDOWN_PORT_WAIT_POLL_INTERVAL_NS
+            )
+            sleep_ns = max(0, next_poll_ns - now_ns)
+            if sleep_ns:
+                sleep_seconds = min(
+                    sleep_ns / 1_000_000_000,
+                    (deadline_ns - now_ns) / 1_000_000_000,
+                )
+                try:
+                    sleeper(sleep_seconds)
+                    now_ns = monotonic_ns()
+                except Exception as exc:
+                    failure_code = "teardown_wait_sleep_failed_" + type(exc).__name__
+                    return finish(failure_code, last_clock_ns)
+                if type(now_ns) is not int or now_ns < last_clock_ns:
+                    return finish("teardown_monotonic_clock_invalid", last_clock_ns)
+                last_clock_ns = now_ns
+                if now_ns >= deadline_ns:
+                    return finish("teardown_port_wait_timeout", now_ns)
+                if now_ns < next_poll_ns:
+                    return finish("teardown_wait_sleep_returned_early", now_ns)
+
+        attempt_started_ns = now_ns
+        last_attempt_started_ns = attempt_started_ns
+        attempt: dict[str, Any] = {
+            "started_monotonic_ns": attempt_started_ns,
+            "completed_monotonic_ns": attempt_started_ns,
+            "listener_census": {str(port): None for port in REQUIRED_PORTS},
+            "port_observations": {str(port): None for port in REQUIRED_PORTS},
+        }
+        census_failure: str | None = None
+        for index, port in enumerate(REQUIRED_PORTS):
+            try:
+                census_started_ns = monotonic_ns()
+            except Exception as exc:
+                census_failure = (
+                    "teardown_monotonic_clock_failed_" + type(exc).__name__
+                )
+                break
+            if type(census_started_ns) is not int or census_started_ns < last_clock_ns:
+                census_failure = "teardown_monotonic_clock_invalid"
+                break
+            last_clock_ns = census_started_ns
+            remaining_ns = deadline_ns - census_started_ns
+            ports_remaining = len(REQUIRED_PORTS) - index
+            if remaining_ns <= 0:
+                census_failure = "teardown_port_wait_timeout"
+                break
+            observer_timeout = min(
+                OBSERVER_TIMEOUT_SECONDS,
+                remaining_ns / ports_remaining / 1_000_000_000,
+            )
+            if observer_timeout <= 0:
+                census_failure = "teardown_port_wait_timeout"
+                break
+            try:
+                observation = _listener_census_observation(
+                    port, timeout_seconds=observer_timeout
+                )
+                if not isinstance(observation, Mapping):
+                    observation = _unobserved_listener_census(
+                        port, "listener_census_observation_invalid"
+                    )
+            except Exception as exc:
+                observation = _unobserved_listener_census(
+                    port,
+                    "listener_census_exception_" + type(exc).__name__,
+                )
+            attempt["listener_census"][str(port)] = dict(observation)
+            try:
+                census_completed_ns = monotonic_ns()
+            except Exception as exc:
+                census_failure = (
+                    "teardown_monotonic_clock_failed_" + type(exc).__name__
+                )
+                break
+            if (
+                type(census_completed_ns) is not int
+                or census_completed_ns < last_clock_ns
+            ):
+                census_failure = "teardown_monotonic_clock_invalid"
+                break
+            last_clock_ns = census_completed_ns
+            if census_completed_ns >= deadline_ns:
+                census_failure = "teardown_port_wait_timeout"
+                break
+            if not _listener_census_observation_is_valid(observation, port):
+                census_failure = "teardown_listener_census_malformed"
+                break
+            if observation.get("observed") is not True:
+                census_failure = (
+                    "teardown_listener_census_malformed"
+                    if observation.get("failure_code") == "listener_census_malformed"
+                    else "teardown_listener_census_unobservable"
+                )
+                break
+            listener_pids = observation.get("listener_pids")
+            if (
+                not isinstance(listener_pids, list)
+                or any(type(pid) is not int or pid <= 0 for pid in listener_pids)
+                or listener_pids != sorted(set(listener_pids))
+            ):
+                census_failure = "teardown_listener_census_malformed"
+                break
+            if listener_pids:
+                census_failure = "teardown_listener_present"
+                break
+
+        if census_failure is None:
+            try:
+                port_observations = _required_port_observations()
+            except Exception as exc:
+                census_failure = "teardown_port_bind_exception_" + type(exc).__name__
+                port_observations = {}
+            if isinstance(port_observations, Mapping):
+                for port in REQUIRED_PORTS:
+                    attempt["port_observations"][str(port)] = port_observations.get(
+                        port
+                    )
+
+        try:
+            attempt_completed_ns = monotonic_ns()
+        except Exception as exc:
+            attempt_completed_ns = last_clock_ns
+            census_failure = census_failure or (
+                "teardown_monotonic_clock_failed_" + type(exc).__name__
+            )
+        if (
+            type(attempt_completed_ns) is not int
+            or attempt_completed_ns < last_clock_ns
+        ):
+            attempt_completed_ns = last_clock_ns
+            census_failure = census_failure or "teardown_monotonic_clock_invalid"
+        last_clock_ns = attempt_completed_ns
+        attempt["completed_monotonic_ns"] = attempt_completed_ns
+        wait["attempts"].append(attempt)
+
+        if census_failure is not None:
+            return finish(census_failure, attempt_completed_ns)
+        if attempt_completed_ns > deadline_ns:
+            return finish("teardown_port_wait_timeout", attempt_completed_ns)
+
+        kinds = {
+            port: _teardown_port_observation_kind(
+                attempt["port_observations"].get(str(port)), port
+            )
+            for port in REQUIRED_PORTS
+        }
+        if any(kind is None for kind in kinds.values()):
+            return finish("teardown_port_bind_unexpected_error", attempt_completed_ns)
+        if all(kind == "free" for kind in kinds.values()):
+            return finish(None, attempt_completed_ns)
+        if not all(kind in ("free", "occupied") for kind in kinds.values()):
+            return finish("teardown_port_bind_unexpected_error", attempt_completed_ns)
+        if attempt_completed_ns >= deadline_ns:
+            return finish("teardown_port_wait_timeout", attempt_completed_ns)
+
+
+def _failed_teardown_wait_evidence(
+    *, lock_held: bool, failure_code: str
+) -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "clock": "time.monotonic_ns",
+        "lock_held": lock_held is True,
+        "status": "failed",
+        "failure_code": failure_code,
+        "timeout_ns": TEARDOWN_PORT_WAIT_TIMEOUT_NS,
+        "poll_interval_ns": TEARDOWN_PORT_WAIT_POLL_INTERVAL_NS,
+        "started_monotonic_ns": None,
+        "completed_monotonic_ns": None,
+        "elapsed_monotonic_ns": None,
+        "attempts": [],
+        "initial": None,
+        "final": None,
+        "final_process_census": None,
     }
 
 
@@ -2356,6 +2694,36 @@ def _valid_lock_release_record(value: Any, booking_id: str) -> bool:
     end = _parse_utc_timestamp(value.get("window_end"))
     ports_free = value.get("ports_free")
     after_teardown_socket_pids = value.get("after_teardown_socket_pids")
+    teardown_schema_version = value.get("teardown_evidence_schema_version")
+    wait_fields = {
+        "teardown_wait_schema_version",
+        "teardown_wait_sha256",
+        "teardown_wait_elapsed_monotonic_ns",
+        "teardown_wait_completed_monotonic_ns",
+        "after_teardown_socket_sample_observed_monotonic_ns",
+    }
+    if teardown_schema_version == 1:
+        wait_contract_valid = not (set(value) & wait_fields)
+    elif teardown_schema_version == 2:
+        wait_elapsed_ns = value.get("teardown_wait_elapsed_monotonic_ns")
+        wait_completed_ns = value.get("teardown_wait_completed_monotonic_ns")
+        census_observed_ns = value.get(
+            "after_teardown_socket_sample_observed_monotonic_ns"
+        )
+        wait_contract_valid = bool(
+            type(value.get("teardown_wait_schema_version")) is int
+            and value.get("teardown_wait_schema_version") == 1
+            and isinstance(value.get("teardown_wait_sha256"), str)
+            and _SHA256.fullmatch(value.get("teardown_wait_sha256", "")) is not None
+            and type(wait_elapsed_ns) is int
+            and 0 <= wait_elapsed_ns <= TEARDOWN_PORT_WAIT_TIMEOUT_NS
+            and type(wait_completed_ns) is int
+            and wait_completed_ns >= 0
+            and type(census_observed_ns) is int
+            and census_observed_ns > wait_completed_ns
+        )
+    else:
+        wait_contract_valid = False
     return bool(
         value.get("event") == "released"
         and value.get("booking_id") == booking_id
@@ -2379,8 +2747,8 @@ def _valid_lock_release_record(value: Any, booking_id: str) -> bool:
         and set(ports_free) == {str(port) for port in REQUIRED_PORTS}
         and all(ports_free.get(str(port)) is True for port in REQUIRED_PORTS)
         and _valid_evidence_path(value.get("evidence_path"))
-        and type(value.get("teardown_evidence_schema_version")) is int
-        and value.get("teardown_evidence_schema_version") == 1
+        and type(teardown_schema_version) is int
+        and wait_contract_valid
         and _valid_evidence_path(value.get("teardown_evidence_path"))
     )
 
@@ -2398,6 +2766,7 @@ def _run_observer_command(
     *,
     empty_result_is_success: bool = False,
     max_output_bytes: int = MAX_OBSERVER_OUTPUT_BYTES,
+    timeout_seconds: float = OBSERVER_TIMEOUT_SECONDS,
 ) -> tuple[dict[str, Any], bytes, bool]:
     """Run one bounded local observer and retain a bounded raw output prefix."""
     from scripts.live_gate_preflight_safety import run_guarded_subprocess
@@ -2412,7 +2781,7 @@ def _run_observer_command(
             cwd=PROJECT_ROOT,
             check=False,
             capture_output=True,
-            timeout=OBSERVER_TIMEOUT_SECONDS,
+            timeout=timeout_seconds,
         )
         returncode = completed.returncode
         stdout = _observer_bytes(completed.stdout)
@@ -2463,12 +2832,29 @@ def _parse_lsof_listener_pids(raw: bytes, *, port: int) -> tuple[set[int], bool]
     if not isinstance(raw, bytes):
         return set(), False
     pids: set[int] = set()
+    expected_header = [
+        b"COMMAND",
+        b"PID",
+        b"USER",
+        b"FD",
+        b"TYPE",
+        b"DEVICE",
+        b"SIZE/OFF",
+        b"NODE",
+        b"NAME",
+    ]
+    saw_header = False
     for line in raw.splitlines():
         if not line.strip():
             continue
         header = line.split()
-        if len(header) >= 2 and header[0:2] == [b"COMMAND", b"PID"]:
+        if header[0:2] == [b"COMMAND", b"PID"]:
+            if header != expected_header or saw_header or pids:
+                return set(), False
+            saw_header = True
             continue
+        if not saw_header:
+            return set(), False
         fields = line.split(None, 8)
         if len(fields) != 9:
             return set(), False
@@ -2494,26 +2880,171 @@ def _parse_lsof_listener_pids(raw: bytes, *, port: int) -> tuple[set[int], bool]
         if not _host or not port_text.isdecimal() or int(port_text) != port:
             return set(), False
         pids.add(pid)
-    return pids, True
+    return pids, not raw.strip() or saw_header
 
 
 def _listener_pids(port: int) -> tuple[set[int], bool]:
     """Observe listeners on a reserved port across all local interfaces."""
+    observation = _listener_census_observation(port)
+    return set(observation["listener_pids"]), observation["observed"] is True
+
+
+def _listener_census_observation(
+    port: int,
+    *,
+    timeout_seconds: float = OBSERVER_TIMEOUT_SECONDS,
+) -> dict[str, Any]:
+    """Return bounded, independently identified lsof evidence for one port."""
     if type(port) is not int or port not in REQUIRED_PORTS:
-        return set(), False
+        return {
+            "schema_version": 1,
+            "method": "lsof-tcp-listen",
+            "port": port,
+            "command": [],
+            "returncode": None,
+            "stdout_byte_count": 0,
+            "stdout_sha256": hashlib.sha256(b"").hexdigest(),
+            "identity_sha256": None,
+            "observed": False,
+            "parseable": False,
+            "listener_pids": [],
+            "failure_code": "listener_census_port_invalid",
+        }
     command = [
         LSOF_EXECUTABLE,
         "-nP",
         "-iTCP:%d" % port,
         "-sTCP:LISTEN",
     ]
-    _command_evidence, raw_output, command_observed = _run_observer_command(
-        command, empty_result_is_success=True
+    command_evidence, raw_output, command_observed = _run_observer_command(
+        command,
+        empty_result_is_success=True,
+        timeout_seconds=timeout_seconds,
     )
-    if not command_observed:
-        return set(), False
     pids, parseable = _parse_lsof_listener_pids(raw_output, port=port)
-    return pids, parseable
+    if command_evidence.get("returncode") == 0 and not raw_output.strip():
+        parseable = False
+    observed = command_observed and parseable
+    failure_code = (
+        None
+        if observed
+        else "listener_census_malformed"
+        if command_observed
+        else "listener_census_unavailable"
+    )
+    identity = {
+        "observer": "lsof",
+        "census_method": "tcp-listen",
+        "port": port,
+        "command": command,
+        "returncode": command_evidence.get("returncode"),
+        "stdout_byte_count": command_evidence.get("stdout_byte_count"),
+        "stdout_sha256": command_evidence.get("stdout_sha256"),
+    }
+    return {
+        "schema_version": 1,
+        "method": "lsof-tcp-listen",
+        "port": port,
+        **identity,
+        "identity_sha256": _canonical_json_sha256(identity),
+        "observed": observed,
+        "parseable": parseable,
+        "listener_pids": sorted(pids) if parseable else [],
+        "failure_code": failure_code,
+    }
+
+
+def _canonical_json_sha256(value: Any) -> str:
+    raw = json.dumps(
+        value,
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("ascii")
+    return hashlib.sha256(raw).hexdigest()
+
+
+def _listener_census_observation_is_valid(value: Any, port: int) -> bool:
+    fields = {
+        "schema_version",
+        "method",
+        "port",
+        "observer",
+        "census_method",
+        "command",
+        "returncode",
+        "stdout_byte_count",
+        "stdout_sha256",
+        "identity_sha256",
+        "observed",
+        "parseable",
+        "listener_pids",
+        "failure_code",
+    }
+    if not isinstance(value, Mapping) or set(value) != fields:
+        return False
+    command = [
+        LSOF_EXECUTABLE,
+        "-nP",
+        "-iTCP:%d" % port,
+        "-sTCP:LISTEN",
+    ]
+    identity = {
+        "observer": "lsof",
+        "census_method": "tcp-listen",
+        "port": port,
+        "command": command,
+        "returncode": value.get("returncode"),
+        "stdout_byte_count": value.get("stdout_byte_count"),
+        "stdout_sha256": value.get("stdout_sha256"),
+    }
+    pids = value.get("listener_pids")
+    observed = value.get("observed")
+    parseable = value.get("parseable")
+    if (
+        type(value.get("schema_version")) is not int
+        or value.get("schema_version") != 1
+        or value.get("method") != "lsof-tcp-listen"
+        or type(value.get("port")) is not int
+        or value.get("port") != port
+        or value.get("observer") != "lsof"
+        or value.get("census_method") != "tcp-listen"
+        or value.get("command") != command
+        or (
+            value.get("returncode") is not None
+            and type(value.get("returncode")) is not int
+        )
+        or type(value.get("stdout_byte_count")) is not int
+        or value.get("stdout_byte_count") < 0
+        or not isinstance(value.get("stdout_sha256"), str)
+        or _SHA256.fullmatch(value["stdout_sha256"]) is None
+        or value.get("identity_sha256") != _canonical_json_sha256(identity)
+        or type(observed) is not bool
+        or type(parseable) is not bool
+        or not isinstance(pids, list)
+        or any(type(pid) is not int or pid <= 0 for pid in pids)
+        or pids != sorted(set(pids))
+    ):
+        return False
+    if observed:
+        return bool(
+            parseable
+            and value.get("failure_code") is None
+            and value.get("returncode") in (0, 1)
+            and (
+                value.get("returncode") != 0
+                or value.get("stdout_byte_count") > 0
+            )
+            and (
+                value.get("returncode") != 1
+                or value.get("stdout_byte_count") == 0
+            )
+        )
+    return bool(
+        isinstance(value.get("failure_code"), str)
+        and value.get("failure_code")
+        and (not parseable or value.get("failure_code") == "listener_census_unavailable")
+    )
 
 
 def _parse_netstat_endpoint(value: bytes) -> dict[str, Any] | None:
@@ -4290,20 +4821,93 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
     socket_pid_samples: list[dict[str, Any]] = []
     process_census: dict[str, Any] | None = None
     shutdown_request: dict[str, Any] | None = None
-    teardown_port_observations: dict[int, dict[str, Any]] = {}
+    teardown_port_observations: dict[int, Any] = {}
+    teardown_wait_evidence: dict[str, Any] | None = None
     checkpoint_travel_proof: dict[str, Any] | None = None
     after_teardown_sample: Mapping[str, Any] | None = None
     after_teardown_sample_complete = False
+    after_teardown_sample_observed_monotonic_ns: int | None = None
     adv_summary_child_evidence: dict[str, Any] | None = None
     summary_child_artifacts: dict[str, Any] | None = None
     summary_child_retention: dict[str, Any] | None = None
 
     def release_live_window_lock() -> bool:
+        final_census = (
+            teardown_wait_evidence.get("final_process_census")
+            if isinstance(teardown_wait_evidence, Mapping)
+            else None
+        )
+        final_attempt = (
+            teardown_wait_evidence.get("final")
+            if isinstance(teardown_wait_evidence, Mapping)
+            else None
+        )
+        wait_attempts = (
+            teardown_wait_evidence.get("attempts")
+            if isinstance(teardown_wait_evidence, Mapping)
+            else None
+        )
+        final_listener_census = (
+            final_attempt.get("listener_census")
+            if isinstance(final_attempt, Mapping)
+            else None
+        )
+        final_bind_observations = (
+            final_attempt.get("port_observations")
+            if isinstance(final_attempt, Mapping)
+            else None
+        )
         if (
             not server_stopped
             or not port_free
             or not after_teardown_sample_complete
             or not isinstance(after_teardown_sample, Mapping)
+            or not isinstance(teardown_wait_evidence, Mapping)
+            or teardown_wait_evidence.get("schema_version") != 1
+            or teardown_wait_evidence.get("lock_held") is not True
+            or teardown_wait_evidence.get("status") != "ports_free"
+            or teardown_wait_evidence.get("failure_code") is not None
+            or type(teardown_wait_evidence.get("started_monotonic_ns")) is not int
+            or type(teardown_wait_evidence.get("completed_monotonic_ns")) is not int
+            or type(teardown_wait_evidence.get("elapsed_monotonic_ns")) is not int
+            or teardown_wait_evidence["elapsed_monotonic_ns"]
+            != teardown_wait_evidence["completed_monotonic_ns"]
+            - teardown_wait_evidence["started_monotonic_ns"]
+            or not 0
+            <= teardown_wait_evidence["elapsed_monotonic_ns"]
+            <= TEARDOWN_PORT_WAIT_TIMEOUT_NS
+            or not isinstance(wait_attempts, list)
+            or not wait_attempts
+            or not isinstance(final_attempt, Mapping)
+            or final_attempt != wait_attempts[-1]
+            or not isinstance(final_listener_census, Mapping)
+            or set(final_listener_census) != {str(port) for port in REQUIRED_PORTS}
+            or not isinstance(final_bind_observations, Mapping)
+            or set(final_bind_observations) != {str(port) for port in REQUIRED_PORTS}
+            or any(
+                not _listener_census_observation_is_valid(
+                    final_listener_census[str(port)], port
+                )
+                or final_listener_census[str(port)].get("observed") is not True
+                or final_listener_census[str(port)].get("listener_pids") != []
+                or _teardown_port_observation_kind(
+                    final_bind_observations[str(port)], port
+                )
+                != "free"
+                for port in REQUIRED_PORTS
+            )
+            or not isinstance(final_census, Mapping)
+            or final_census.get("observed") is not True
+            or final_census.get("listener_pids") != []
+            or final_census.get("path") != after_teardown_sample.get("evidence_path")
+            or final_census.get("sha256")
+            != after_teardown_sample.get("evidence_sha256")
+            or type(final_census.get("observed_monotonic_ns")) is not int
+            or final_census.get("observed_monotonic_ns")
+            != after_teardown_sample_observed_monotonic_ns
+            or type(teardown_wait_evidence.get("completed_monotonic_ns")) is not int
+            or final_census["observed_monotonic_ns"]
+            <= teardown_wait_evidence["completed_monotonic_ns"]
         ):
             return False
         evidence_path = (
@@ -4317,6 +4921,7 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
             else ""
         )
         try:
+            wait_sha256 = _canonical_json_sha256(teardown_wait_evidence)
             return lock.release(
                 {
                     **lock_record,
@@ -4336,9 +4941,20 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
                     "after_teardown_socket_sample_sha256": after_teardown_sample.get(
                         "evidence_sha256"
                     ),
+                    "after_teardown_socket_sample_observed_monotonic_ns": (
+                        after_teardown_sample_observed_monotonic_ns
+                    ),
                     "evidence_path": evidence_path,
-                    "teardown_evidence_schema_version": 1,
+                    "teardown_evidence_schema_version": 2,
                     "teardown_evidence_path": teardown_evidence_path,
+                    "teardown_wait_schema_version": 1,
+                    "teardown_wait_sha256": wait_sha256,
+                    "teardown_wait_elapsed_monotonic_ns": (
+                        teardown_wait_evidence.get("elapsed_monotonic_ns")
+                    ),
+                    "teardown_wait_completed_monotonic_ns": (
+                        teardown_wait_evidence.get("completed_monotonic_ns")
+                    ),
                 }
             )
         except Exception:
@@ -4474,17 +5090,6 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
             failure_code = failure_code or "host_server_stop_failed"
         else:
             server_stopped = process.poll() is not None
-        teardown_port_observations = _required_port_observations()
-        port_status = {
-            port: observation.get("result") == "free"
-            and observation.get("observation_complete") is True
-            for port, observation in teardown_port_observations.items()
-        }
-        port_free = _ports_are_free(port_status)
-        if not port_free:
-            failure_code = failure_code or _port_failure_code(
-                port_status, "after_stop"
-            )
         result = _read_worker_result(
             _worker_result_path_for_run(args.run_id, preflight_run_id)
         )
@@ -4673,33 +5278,108 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
                 failure_code = failure_code or "host_server_stop_failed"
             else:
                 server_stopped = process.poll() is not None
-        port_status = _required_port_status()
+        lock_held = bool(
+            getattr(lock, "acquired", False) is True
+            or getattr(lock, "held", False) is True
+        )
+        try:
+            teardown_wait_evidence = _wait_for_teardown_ports(
+                lock_held=lock_held,
+                monotonic_ns=time.monotonic_ns,
+                sleeper=time.sleep,
+            )
+        except Exception as exc:
+            teardown_wait_evidence = _failed_teardown_wait_evidence(
+                lock_held=lock_held,
+                failure_code="teardown_port_wait_failed_" + type(exc).__name__,
+            )
+        final_attempt = teardown_wait_evidence.get("final")
+        final_bind_observations = (
+            final_attempt.get("port_observations")
+            if isinstance(final_attempt, Mapping)
+            else None
+        )
+        if not isinstance(final_bind_observations, Mapping):
+            final_bind_observations = {}
+        teardown_port_observations = {
+            port: final_bind_observations.get(str(port))
+            for port in REQUIRED_PORTS
+        }
+        port_status = {
+            port: _teardown_port_observation_kind(
+                teardown_port_observations.get(port), port
+            )
+            == "free"
+            for port in REQUIRED_PORTS
+        }
         port_free = _ports_are_free(port_status)
-        if not port_free:
-            failure_code = failure_code or _port_failure_code(
-                port_status, "after_teardown"
+        if teardown_wait_evidence.get("failure_code") is not None:
+            failure_code = failure_code or str(
+                teardown_wait_evidence["failure_code"]
             )
         if run_directory is None:
             failure_code = failure_code or "socket_sample_evidence_directory_unavailable"
         else:
-            guard_events, _journal_bytes, journal_complete = _read_guard_events_for_run(
-                run_directory, args.run_id
-            )
-            socket_pid_samples.append(
-                _socket_pid_sample(
+            try:
+                guard_events, _journal_bytes, journal_complete = (
+                    _read_guard_events_for_run(run_directory, args.run_id)
+                )
+                after_teardown_observation = _socket_pid_sample(
                     "after_teardown",
                     run_directory=run_directory,
                     process_scopes=process_scopes,
                     guard_events=guard_events,
                     guard_events_complete=journal_complete,
                 )
-            )
+            except Exception as exc:
+                census_failure = (
+                    "process_census_after_teardown_failed_" + type(exc).__name__
+                )
+                failure_code = failure_code or census_failure
+                after_teardown_observation = {
+                    "phase": "after_teardown",
+                    "port": HOST_PORT,
+                    "observed": False,
+                    "pids": [],
+                    "listener_pids": [],
+                    "failure_code": census_failure,
+                }
+            socket_pid_samples.append(after_teardown_observation)
         after_teardown_sample = (
             socket_pid_samples[-1]
             if socket_pid_samples
             and socket_pid_samples[-1].get("phase") == "after_teardown"
             else None
         )
+        try:
+            after_teardown_sample_observed_monotonic_ns = time.monotonic_ns()
+        except Exception:
+            after_teardown_sample_observed_monotonic_ns = 0
+            failure_code = failure_code or "process_census_monotonic_time_unavailable"
+        teardown_wait_evidence["final_process_census"] = {
+            "phase": "after_teardown",
+            "path": (
+                after_teardown_sample.get("evidence_path")
+                if isinstance(after_teardown_sample, Mapping)
+                else None
+            ),
+            "sha256": (
+                after_teardown_sample.get("evidence_sha256")
+                if isinstance(after_teardown_sample, Mapping)
+                else None
+            ),
+            "observed": (
+                after_teardown_sample.get("observed") is True
+                if isinstance(after_teardown_sample, Mapping)
+                else False
+            ),
+            "listener_pids": (
+                after_teardown_sample.get("listener_pids")
+                if isinstance(after_teardown_sample, Mapping)
+                else None
+            ),
+            "observed_monotonic_ns": after_teardown_sample_observed_monotonic_ns,
+        }
         controller_report = next(
             (
                 report
@@ -4876,7 +5556,7 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
             "durable_record": getattr(lock, "release_log_reference", None),
         }
         teardown_sidecar = {
-            "schema_version": 1,
+            "schema_version": 2,
             "run_id": args.run_id,
             "preflight_run_id": preflight_run_id,
             "source_sha": args.source_sha,
@@ -4890,6 +5570,7 @@ def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
                 str(port): teardown_port_observations.get(port)
                 for port in REQUIRED_PORTS
             },
+            "teardown_wait": teardown_wait_evidence,
             "socket_census": {
                 "phase": "after_teardown",
                 "path": (

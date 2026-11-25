@@ -7,9 +7,10 @@
 
 from __future__ import annotations
 
+import copy
+import errno
 import hashlib
 import json
-import errno
 import os
 import signal
 import shutil
@@ -235,6 +236,35 @@ class TestPreflightRowIntegration(unittest.TestCase):
         }
 
     @staticmethod
+    def _synthetic_empty_listener_census(port: int) -> dict[str, Any]:
+        output = b""
+        identity = {
+            "observer": "lsof",
+            "census_method": "tcp-listen",
+            "port": port,
+            "command": [
+                profile_runner.LSOF_EXECUTABLE,
+                "-nP",
+                "-iTCP:%d" % port,
+                "-sTCP:LISTEN",
+            ],
+            "returncode": 1,
+            "stdout_byte_count": 0,
+            "stdout_sha256": hashlib.sha256(output).hexdigest(),
+        }
+        return {
+            "schema_version": 1,
+            "method": "lsof-tcp-listen",
+            "port": port,
+            **identity,
+            "identity_sha256": profile_runner._canonical_json_sha256(identity),
+            "observed": True,
+            "parseable": True,
+            "listener_pids": [],
+            "failure_code": None,
+        }
+
+    @staticmethod
     def _caller_declared_identity(
         plan: controller.PreflightRowPlan,
         *,
@@ -317,6 +347,7 @@ class TestPreflightRowIntegration(unittest.TestCase):
         observed_call_sites: list[dict[str, Any]] | None = None,
         server_returned: bool = True,
         late_guarded_child: bool = False,
+        teardown_schema_version: int = 1,
     ) -> tuple[dict[str, Any], str, str]:
         comparison_identity = getattr(args, "comparison_identity_json", None)
         command = profile_runner._host_command(
@@ -871,6 +902,48 @@ class TestPreflightRowIntegration(unittest.TestCase):
         teardown_path = (
             evidence_directory / "teardown-evidence.json"
         ).relative_to(PROJECT_ROOT).as_posix()
+        port_observations = {
+            str(port): self._synthetic_free_bind_observation(port)
+            for port in (8360, 8370)
+        }
+        after_teardown_sample = census_samples[2]
+        teardown_wait: dict[str, Any] | None = None
+        if teardown_schema_version == 2:
+            wait_attempt = {
+                "started_monotonic_ns": 0,
+                "completed_monotonic_ns": 0,
+                "listener_census": {
+                    str(port): self._synthetic_empty_listener_census(port)
+                    for port in (8360, 8370)
+                },
+                "port_observations": {
+                    port: dict(observation)
+                    for port, observation in port_observations.items()
+                },
+            }
+            teardown_wait = {
+                "schema_version": 1,
+                "clock": "time.monotonic_ns",
+                "lock_held": True,
+                "status": "ports_free",
+                "failure_code": None,
+                "timeout_ns": 75_000_000_000,
+                "poll_interval_ns": 1_000_000_000,
+                "started_monotonic_ns": 0,
+                "completed_monotonic_ns": 0,
+                "elapsed_monotonic_ns": 0,
+                "attempts": [wait_attempt],
+                "initial": wait_attempt,
+                "final": wait_attempt,
+                "final_process_census": {
+                    "phase": "after_teardown",
+                    "path": after_teardown_sample["evidence_path"],
+                    "sha256": after_teardown_sample["evidence_sha256"],
+                    "observed": True,
+                    "listener_pids": [],
+                    "observed_monotonic_ns": 1,
+                },
+            }
         release_record = {
             **lock_record,
             "event": "released",
@@ -888,9 +961,25 @@ class TestPreflightRowIntegration(unittest.TestCase):
                 "evidence_sha256"
             ],
             "evidence_path": evidence_path,
-            "teardown_evidence_schema_version": 1,
+            "teardown_evidence_schema_version": teardown_schema_version,
             "teardown_evidence_path": teardown_path,
         }
+        if teardown_wait is not None:
+            wait_raw = json.dumps(
+                teardown_wait,
+                ensure_ascii=True,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("ascii")
+            release_record.update(
+                {
+                    "teardown_wait_schema_version": 1,
+                    "teardown_wait_sha256": hashlib.sha256(wait_raw).hexdigest(),
+                    "teardown_wait_elapsed_monotonic_ns": 0,
+                    "teardown_wait_completed_monotonic_ns": 0,
+                    "after_teardown_socket_sample_observed_monotonic_ns": 1,
+                }
+            )
         self.fake_common_directory = (
             self.retained_run_directory / "fake-git-common" / args.run_id
         )
@@ -912,7 +1001,7 @@ class TestPreflightRowIntegration(unittest.TestCase):
         }
         after_teardown_sample = census_samples[2]
         teardown_sidecar = {
-            "schema_version": 1,
+            "schema_version": teardown_schema_version,
             "run_id": args.run_id,
             "preflight_run_id": args.preflight_run_id,
             "source_sha": args.source_sha,
@@ -947,10 +1036,7 @@ class TestPreflightRowIntegration(unittest.TestCase):
                 "reaped": True,
                 "observed_at_ns": received_at_ns + 1,
             },
-            "port_observations": {
-                "8360": self._synthetic_free_bind_observation(8360),
-                "8370": self._synthetic_free_bind_observation(8370),
-            },
+            "port_observations": port_observations,
             "socket_census": {
                 "phase": "after_teardown",
                 "path": after_teardown_sample["evidence_path"],
@@ -968,6 +1054,8 @@ class TestPreflightRowIntegration(unittest.TestCase):
                 "durable_record": durable_record,
             },
         }
+        if teardown_wait is not None:
+            teardown_sidecar["teardown_wait"] = teardown_wait
         if comparison_identity is not None:
             teardown_sidecar["comparison_identity"] = dict(comparison_identity)
         teardown_file = evidence_directory / "teardown-evidence.json"
@@ -1058,6 +1146,7 @@ class TestPreflightRowIntegration(unittest.TestCase):
         source_sha: str = SOURCE_SHA,
         comparison_identity: dict[str, Any] | None = None,
         late_guarded_child: bool = False,
+        teardown_schema_version: int = 1,
     ) -> tuple[controller.PreflightRowPlan, str, dict[str, Any], dict[str, Any]]:
         rows, _reserves = _load_frozen_row_ids(None)
         profiles, _coverage = _load_profiles([row["row_id"] for row in rows])
@@ -1084,6 +1173,7 @@ class TestPreflightRowIntegration(unittest.TestCase):
             args,
             server_returned=server_returned,
             late_guarded_child=late_guarded_child,
+            teardown_schema_version=teardown_schema_version,
         )
         intended_identity = planned_worker_identity(
             plan,
@@ -2791,6 +2881,178 @@ class TestPreflightRowIntegration(unittest.TestCase):
         durable_bytes[durable["byte_offset"] + 2] ^= 1
         durable_path.write_bytes(durable_bytes)
         with self.assertRaisesRegex(retained.RetainedEvidenceError, "line hash differs"):
+            self._validate_retained_case(plan, row_run_id, identity, result)
+
+    def test_retained_v2_wait_proof_is_strict_and_legacy_v1_still_validates(
+        self,
+    ) -> None:
+        plan, row_run_id, identity, result = self._retained_case(
+            teardown_schema_version=2
+        )
+        sidecar_path = PROJECT_ROOT / result["evidence"]["teardown_evidence"]["path"]
+        sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
+        wait = sidecar["teardown_wait"]
+        summary = self._validate_retained_case(plan, row_run_id, identity, result)
+        self.assertTrue(
+            summary["worker_teardown"]["shared_live_window_lock_released"]
+        )
+
+        invalid_waits: list[tuple[str, dict[str, Any]]] = []
+        missing_observation = json.loads(json.dumps(wait))
+        del missing_observation["final"]["port_observations"]["8370"]
+        invalid_waits.append(("missing_observation", missing_observation))
+
+        malformed_census = json.loads(json.dumps(wait))
+        malformed_census["final"]["listener_census"]["8360"][
+            "identity_sha256"
+        ] = "0" * 64
+        invalid_waits.append(("malformed_census", malformed_census))
+
+        unsupported_wait_version = json.loads(json.dumps(wait))
+        unsupported_wait_version["schema_version"] = 2
+        invalid_waits.append(("unsupported_wait_version", unsupported_wait_version))
+
+        timeout = json.loads(json.dumps(wait))
+        timeout["status"] = "failed"
+        timeout["failure_code"] = "teardown_port_wait_timeout"
+        timeout["elapsed_monotonic_ns"] = 75_000_000_000
+        invalid_waits.append(("timeout", timeout))
+
+        unclean_census = json.loads(json.dumps(wait))
+        unclean_census["final_process_census"]["listener_pids"] = [12345]
+        invalid_waits.append(("unclean_final_census", unclean_census))
+
+        predating_census = json.loads(json.dumps(wait))
+        predating_census["final_process_census"]["observed_monotonic_ns"] = 0
+        invalid_waits.append(("predating_final_census", predating_census))
+
+        polled_too_soon = json.loads(json.dumps(wait))
+        first_attempt = polled_too_soon["attempts"][0]
+        first_attempt["port_observations"]["8360"] = (
+            self._synthetic_free_bind_observation(8360)
+        )
+        first_attempt["port_observations"]["8360"].update(
+            {
+                "bind_succeeded": False,
+                "error_errno": errno.EADDRINUSE,
+                "error_type": "OSError",
+                "result": "occupied",
+            }
+        )
+        second_attempt = json.loads(json.dumps(wait["attempts"][0]))
+        second_attempt["started_monotonic_ns"] = 500_000_000
+        second_attempt["completed_monotonic_ns"] = 500_000_001
+        polled_too_soon["attempts"].append(second_attempt)
+        polled_too_soon["final"] = second_attempt
+        polled_too_soon["completed_monotonic_ns"] = 500_000_001
+        polled_too_soon["elapsed_monotonic_ns"] = 500_000_001
+        polled_too_soon["final_process_census"]["observed_monotonic_ns"] = (
+            500_000_002
+        )
+        invalid_waits.append(("poll_interval", polled_too_soon))
+
+        for label, invalid_wait in invalid_waits:
+            with self.subTest(label=label), self.assertRaises(
+                retained.RetainedEvidenceError
+            ):
+                retained._validate_teardown_wait_evidence(
+                    invalid_wait,
+                    sidecar=sidecar,
+                    evidence=result["evidence"],
+                    runner=profile_runner,
+                )
+
+        v2_without_wait = json.loads(json.dumps(sidecar))
+        del v2_without_wait["teardown_wait"]
+        self._rewrite_teardown_sidecar(result, v2_without_wait)
+        with self.assertRaisesRegex(
+            retained.RetainedEvidenceError, "teardown evidence identity differs"
+        ):
+            self._validate_retained_case(plan, row_run_id, identity, result)
+
+        downgraded_v2 = json.loads(json.dumps(sidecar))
+        downgraded_v2["schema_version"] = 1
+        self._rewrite_teardown_sidecar(result, downgraded_v2)
+        with self.assertRaisesRegex(
+            retained.RetainedEvidenceError, "teardown evidence identity differs"
+        ):
+            self._validate_retained_case(plan, row_run_id, identity, result)
+
+        downgraded_v2_without_proof = json.loads(json.dumps(sidecar))
+        downgraded_v2_without_proof["schema_version"] = 1
+        del downgraded_v2_without_proof["teardown_wait"]
+        self._rewrite_teardown_sidecar(result, downgraded_v2_without_proof)
+        with self.assertRaisesRegex(
+            retained.RetainedEvidenceError,
+            "retained shared lock release record identity differs",
+        ):
+            self._validate_retained_case(plan, row_run_id, identity, result)
+
+        tampered_sidecar = json.loads(json.dumps(sidecar))
+        tampered_wait = tampered_sidecar["teardown_wait"]
+        tampered_attempt = tampered_wait["attempts"][0]
+        tampered_census = tampered_attempt["listener_census"]["8360"]
+        tampered_census["stdout_sha256"] = "0" * 64
+        census_identity = {
+            "observer": "lsof",
+            "census_method": "tcp-listen",
+            "port": 8360,
+            "command": [
+                profile_runner.LSOF_EXECUTABLE,
+                "-nP",
+                "-iTCP:8360",
+                "-sTCP:LISTEN",
+            ],
+            "returncode": tampered_census["returncode"],
+            "stdout_byte_count": tampered_census["stdout_byte_count"],
+            "stdout_sha256": tampered_census["stdout_sha256"],
+        }
+        tampered_census["identity_sha256"] = profile_runner._canonical_json_sha256(
+            census_identity
+        )
+        tampered_wait["initial"] = json.loads(json.dumps(tampered_attempt))
+        tampered_wait["final"] = json.loads(json.dumps(tampered_attempt))
+        self._rewrite_teardown_sidecar(result, tampered_sidecar)
+        with self.assertRaisesRegex(
+            retained.RetainedEvidenceError,
+            "retained shared lock release record identity differs",
+        ):
+            self._validate_retained_case(plan, row_run_id, identity, result)
+
+        plan, row_run_id, identity, result = self._retained_case()
+        legacy = json.loads(
+            (
+                PROJECT_ROOT / result["evidence"]["teardown_evidence"]["path"]
+            ).read_text(encoding="utf-8")
+        )
+        self.assertEqual(legacy["schema_version"], 1)
+        self.assertTrue(
+            self._validate_retained_case(plan, row_run_id, identity, result)[
+                "worker_teardown"
+            ]["shared_live_window_lock_released"]
+        )
+
+        legacy_with_wait = json.loads(json.dumps(legacy))
+        legacy_with_wait["teardown_wait"] = wait
+        self._rewrite_teardown_sidecar(result, legacy_with_wait)
+        with self.assertRaisesRegex(
+            retained.RetainedEvidenceError, "teardown evidence identity differs"
+        ):
+            self._validate_retained_case(plan, row_run_id, identity, result)
+
+        legacy_noninteger_version = json.loads(json.dumps(legacy))
+        legacy_noninteger_version["schema_version"] = True
+        self._rewrite_teardown_sidecar(result, legacy_noninteger_version)
+        with self.assertRaisesRegex(
+            retained.RetainedEvidenceError, "teardown evidence identity differs"
+        ):
+            self._validate_retained_case(plan, row_run_id, identity, result)
+
+        legacy["schema_version"] = 3
+        self._rewrite_teardown_sidecar(result, legacy)
+        with self.assertRaisesRegex(
+            retained.RetainedEvidenceError, "teardown evidence identity differs"
+        ):
             self._validate_retained_case(plan, row_run_id, identity, result)
 
     def test_all_26_planned_rows_cross_existing_sp3_interfaces(self) -> None:
@@ -4514,9 +4776,36 @@ class TestRequiredLifecycleCheckpointPolicy(unittest.TestCase):
     def setUp(self) -> None:
         self.run_id = "checkpoint-policy-" + uuid.uuid4().hex[:10]
         self.rows, _reserves = _load_frozen_row_ids(None)
-        self.profiles, self.coverage = _load_profiles(
+        loaded_profiles, self.coverage = _load_profiles(
             [str(row["row_id"]) for row in self.rows]
         )
+        # These policy tests exercise controller sequencing, not whether the
+        # checked-in measurement still matches edited tooling. Give the in-memory
+        # fixture explicit synthetic tool identities; the dedicated hash-currency
+        # test continues to check the checked-in declarations against disk.
+        tool_paths = (
+            preflight_profiles.STUB_FILE,
+            *preflight_profiles.DRIVER_FILES,
+        )
+        self.simulated_tool_hashes = {
+            path: hashlib.sha256(
+                ("checkpoint-policy-test-tool:" + path).encode("ascii")
+            ).hexdigest()
+            for path in tool_paths
+        }
+        self.profiles = copy.deepcopy(loaded_profiles)
+        for profile in self.profiles.values():
+            for lifecycle in ("startup", "resume"):
+                declaration = profile.get(lifecycle)
+                if (
+                    not isinstance(declaration, dict)
+                    or declaration.get("status") != "measured-under-stub"
+                ):
+                    continue
+                stub = declaration["stub_sha256"]
+                stub["sha256"] = self.simulated_tool_hashes[stub["path"]]
+                for driver in declaration["driver_sha256"]:
+                    driver["sha256"] = self.simulated_tool_hashes[driver["path"]]
 
     @staticmethod
     def _checkpoint(plan: controller.PreflightRowPlan, fixture_id: str, sha: str) -> dict[str, Any]:
@@ -4659,6 +4948,11 @@ class TestRequiredLifecycleCheckpointPolicy(unittest.TestCase):
             },
         )
         with (
+            mock.patch.object(
+                preflight_profiles,
+                "tool_file_hashes",
+                return_value=self.simulated_tool_hashes,
+            ),
             mock.patch.object(
                 controller, "_load_frozen_row_ids", return_value=([frozen_row], [])
             ),

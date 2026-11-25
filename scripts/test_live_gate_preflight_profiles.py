@@ -4690,6 +4690,57 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
         return release
 
     @staticmethod
+    def _listener_census(port: int, listener_pids: list[int] | None = None) -> dict:
+        pids = [] if listener_pids is None else list(listener_pids)
+        output = b"lsof listener fixture\n" if pids else b""
+        identity = {
+            "observer": "lsof",
+            "census_method": "tcp-listen",
+            "port": port,
+            "command": [
+                profile_runner.LSOF_EXECUTABLE,
+                "-nP",
+                "-iTCP:%d" % port,
+                "-sTCP:LISTEN",
+            ],
+            "returncode": 0 if pids else 1,
+            "stdout_byte_count": len(output),
+            "stdout_sha256": hashlib.sha256(output).hexdigest(),
+        }
+        return {
+            "schema_version": 1,
+            "method": "lsof-tcp-listen",
+            "port": port,
+            **identity,
+            "identity_sha256": profile_runner._canonical_json_sha256(identity),
+            "observed": True,
+            "parseable": True,
+            "listener_pids": pids,
+            "failure_code": None,
+        }
+
+    @staticmethod
+    def _bind_observation(port: int, result: str = "free") -> dict:
+        occupied = result == "occupied"
+        return {
+            "schema_version": 1,
+            "method": "exclusive-bind-close",
+            "transport": "tcp",
+            "address": "127.0.0.1",
+            "port": port,
+            "reuse_address": False,
+            "observed_at_ns": 1,
+            "socket_created": True,
+            "bind_attempted": True,
+            "bind_succeeded": not occupied,
+            "socket_closed": True,
+            "result": result,
+            "error_errno": errno.EADDRINUSE if occupied else None,
+            "error_type": "OSError" if occupied else None,
+            "observation_complete": True,
+        }
+
+    @staticmethod
     def _process_scope(
         *,
         selector: str = "process_group",
@@ -5540,6 +5591,297 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
         for observation in (free, occupied, unknown):
             self.assertEqual(observation["method"], "exclusive-bind-close")
             self.assertFalse(observation["reuse_address"])
+
+        unexpected_probe = mock.MagicMock()
+        unexpected_probe.bind.side_effect = RuntimeError("unexpected bind failure")
+        with mock.patch.object(
+            profile_runner.socket, "socket", return_value=unexpected_probe
+        ):
+            unexpected = profile_runner._exclusive_bind_port_observation(8360)
+        self.assertEqual(unexpected["result"], "unobservable")
+        self.assertEqual(unexpected["error_type"], "RuntimeError")
+        self.assertTrue(unexpected["socket_closed"])
+
+    def test_teardown_wait_retries_only_after_clean_census_and_proves_both_ports(
+        self,
+    ) -> None:
+        class FakeClock:
+            now_ns = 1_000_000_000
+            sleeps: list[float] = []
+
+            @classmethod
+            def monotonic_ns(cls) -> int:
+                return cls.now_ns
+
+            @classmethod
+            def sleep(cls, seconds: float) -> None:
+                cls.sleeps.append(seconds)
+                cls.now_ns += int(seconds * 1_000_000_000)
+
+        bind_attempt = 0
+
+        def bind_observations() -> dict[int, dict]:
+            nonlocal bind_attempt
+            bind_attempt += 1
+            return {
+                8360: self._bind_observation(
+                    8360, "occupied" if bind_attempt == 1 else "free"
+                ),
+                8370: self._bind_observation(8370),
+            }
+
+        with (
+            mock.patch.object(
+                profile_runner,
+                "_listener_census_observation",
+                side_effect=lambda port, **_kwargs: self._listener_census(port),
+            ) as census,
+            mock.patch.object(
+                profile_runner,
+                "_required_port_observations",
+                side_effect=bind_observations,
+            ) as binds,
+        ):
+            evidence = profile_runner._wait_for_teardown_ports(
+                lock_held=True,
+                monotonic_ns=FakeClock.monotonic_ns,
+                sleeper=FakeClock.sleep,
+            )
+
+        self.assertEqual(evidence["status"], "ports_free")
+        self.assertIsNone(evidence["failure_code"])
+        self.assertEqual(evidence["elapsed_monotonic_ns"], 1_000_000_000)
+        self.assertEqual(len(evidence["attempts"]), 2)
+        self.assertEqual(
+            evidence["attempts"][1]["started_monotonic_ns"]
+            - evidence["attempts"][0]["started_monotonic_ns"],
+            1_000_000_000,
+        )
+        self.assertEqual(
+            evidence["initial"]["port_observations"]["8360"]["result"],
+            "occupied",
+        )
+        self.assertEqual(
+            evidence["final"]["port_observations"],
+            {
+                "8360": self._bind_observation(8360),
+                "8370": self._bind_observation(8370),
+            },
+        )
+        for attempt in evidence["attempts"]:
+            self.assertEqual(set(attempt["listener_census"]), {"8360", "8370"})
+            self.assertEqual(set(attempt["port_observations"]), {"8360", "8370"})
+            self.assertTrue(
+                all(
+                    item["listener_pids"] == []
+                    for item in attempt["listener_census"].values()
+                )
+            )
+        self.assertEqual(FakeClock.sleeps, [1.0])
+        self.assertEqual(census.call_count, 4)
+        self.assertEqual(binds.call_count, 2)
+
+    def test_listener_census_distinguishes_empty_malformed_and_active_output(self) -> None:
+        empty_output = b""
+        empty_command = {
+            "returncode": 1,
+            "stdout_byte_count": 0,
+            "stdout_sha256": hashlib.sha256(empty_output).hexdigest(),
+        }
+        with mock.patch.object(
+            profile_runner,
+            "_run_observer_command",
+            return_value=(empty_command, empty_output, True),
+        ):
+            empty = profile_runner._listener_census_observation(8360)
+        self.assertTrue(empty["observed"])
+        self.assertEqual(empty["listener_pids"], [])
+
+        malformed_command = {
+            "returncode": 0,
+            "stdout_byte_count": 0,
+            "stdout_sha256": hashlib.sha256(empty_output).hexdigest(),
+        }
+        with mock.patch.object(
+            profile_runner,
+            "_run_observer_command",
+            return_value=(malformed_command, empty_output, True),
+        ):
+            malformed = profile_runner._listener_census_observation(8360)
+        self.assertFalse(malformed["observed"])
+        self.assertEqual(malformed["failure_code"], "listener_census_malformed")
+
+        listener_output = (
+            b"COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\n"
+            b"Python 123 user 3u IPv4 0x1 0t0 TCP "
+            b"127.0.0.1:8360 (LISTEN)\n"
+        )
+        listener_command = {
+            "returncode": 0,
+            "stdout_byte_count": len(listener_output),
+            "stdout_sha256": hashlib.sha256(listener_output).hexdigest(),
+        }
+        with mock.patch.object(
+            profile_runner,
+            "_run_observer_command",
+            return_value=(listener_command, listener_output, True),
+        ):
+            active = profile_runner._listener_census_observation(8360)
+        self.assertTrue(active["observed"])
+        self.assertEqual(active["listener_pids"], [123])
+
+    def test_teardown_wait_fails_closed_on_listener_malformed_census_and_bind_error(
+        self,
+    ) -> None:
+        def run_wait(census_value: object, bind_value: dict | None = None) -> dict:
+            now_ns = 10
+
+            def monotonic_ns() -> int:
+                return now_ns
+
+            def observe(port: int, **_kwargs: object) -> object:
+                return (
+                    census_value(port)
+                    if callable(census_value)
+                    else census_value
+                )
+
+            with (
+                mock.patch.object(
+                    profile_runner,
+                    "_listener_census_observation",
+                    side_effect=observe,
+                ),
+                mock.patch.object(
+                    profile_runner,
+                    "_required_port_observations",
+                    return_value=(
+                        {
+                            port: self._bind_observation(port)
+                            for port in profile_runner.REQUIRED_PORTS
+                        }
+                        if bind_value is None
+                        else bind_value
+                    ),
+                ) as binds,
+            ):
+                result = profile_runner._wait_for_teardown_ports(
+                    lock_held=True,
+                    monotonic_ns=monotonic_ns,
+                    sleeper=lambda _seconds: None,
+                )
+            return result
+
+        listener = run_wait(self._listener_census(8360, [123]))
+        self.assertEqual(listener["failure_code"], "teardown_listener_present")
+        self.assertEqual(len(listener["attempts"]), 1)
+
+        malformed = run_wait({"schema_version": 1, "observed": True})
+        self.assertEqual(
+            malformed["failure_code"], "teardown_listener_census_malformed"
+        )
+
+        unavailable = run_wait(
+            profile_runner._unobserved_listener_census(
+                8360, "listener_census_unavailable"
+            )
+        )
+        self.assertEqual(
+            unavailable["failure_code"],
+            "teardown_listener_census_unobservable",
+        )
+
+        early_sleep = run_wait(
+            lambda port: self._listener_census(port),
+            {
+                8360: self._bind_observation(8360, "occupied"),
+                8370: self._bind_observation(8370),
+            },
+        )
+        self.assertEqual(
+            early_sleep["failure_code"], "teardown_wait_sleep_returned_early"
+        )
+
+        unexpected = run_wait(
+            lambda port: self._listener_census(port),
+            {
+                8360: self._bind_observation(8360, "unobservable"),
+                8370: self._bind_observation(8370),
+            },
+        )
+        self.assertEqual(
+            unexpected["failure_code"], "teardown_port_bind_unexpected_error"
+        )
+
+    def test_teardown_wait_timeout_is_bounded_and_polls_at_most_once_per_second(
+        self,
+    ) -> None:
+        now_ns = 50_000_000
+        poll_starts: list[int] = []
+
+        def monotonic_ns() -> int:
+            return now_ns
+
+        def sleeper(seconds: float) -> None:
+            nonlocal now_ns
+            self.assertLessEqual(seconds, 1.0)
+            now_ns += int(seconds * 1_000_000_000)
+
+        def occupied_bind_observations() -> dict[int, dict]:
+            return {
+                8360: self._bind_observation(8360, "occupied"),
+                8370: self._bind_observation(8370),
+            }
+
+        original_census = self._listener_census
+
+        def census(port: int, **_kwargs: object) -> dict:
+            if port == 8360:
+                poll_starts.append(now_ns)
+            return original_census(port)
+
+        with (
+            mock.patch.object(
+                profile_runner, "_listener_census_observation", side_effect=census
+            ),
+            mock.patch.object(
+                profile_runner,
+                "_required_port_observations",
+                side_effect=occupied_bind_observations,
+            ),
+        ):
+            evidence = profile_runner._wait_for_teardown_ports(
+                lock_held=True, monotonic_ns=monotonic_ns, sleeper=sleeper
+            )
+
+        self.assertEqual(evidence["failure_code"], "teardown_port_wait_timeout")
+        self.assertEqual(
+            evidence["elapsed_monotonic_ns"],
+            profile_runner.TEARDOWN_PORT_WAIT_TIMEOUT_NS,
+        )
+        self.assertEqual(len(evidence["attempts"]), 75)
+        self.assertTrue(
+            all(
+                later - earlier >= 1_000_000_000
+                for earlier, later in zip(poll_starts, poll_starts[1:])
+            )
+        )
+
+    def test_teardown_wait_refuses_to_run_without_lock(self) -> None:
+        with (
+            mock.patch.object(profile_runner, "_listener_census_observation") as census,
+            mock.patch.object(
+                profile_runner, "_required_port_observations"
+            ) as binds,
+        ):
+            evidence = profile_runner._wait_for_teardown_ports(
+                lock_held=False,
+                monotonic_ns=lambda: 10,
+                sleeper=lambda _seconds: None,
+            )
+        self.assertEqual(evidence["failure_code"], "teardown_wait_lock_not_held")
+        census.assert_not_called()
+        binds.assert_not_called()
 
     def _obsolete_lsof_test_sanitized_environment_observer_sees_only_own_loopback_socket(self) -> None:
         self.assertTrue(Path(profile_runner.LSOF_EXECUTABLE).is_file())
@@ -6585,6 +6927,8 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
                 exchange: dict,
                 host_canary_override: object = missing_canary,
                 *,
+                socket_census_fails: bool = False,
+                teardown_listener_present: bool = False,
                 create_checkpoint: bool = False,
                 checkpoint_copy_fails: bool = False,
                 adv_summary_child: dict | None = None,
@@ -6605,6 +6949,17 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
                     _guard_startup_event(12345, run_id),
                 ]
                 checked_ports: list[int] = []
+                monotonic_now_ns = 1_000_000_000
+
+                def monotonic_ns() -> int:
+                    nonlocal monotonic_now_ns
+                    monotonic_now_ns += 1
+                    return monotonic_now_ns
+
+                def sleep_seconds(seconds: float) -> None:
+                    nonlocal monotonic_now_ns
+                    monotonic_now_ns += int(seconds * 1_000_000_000)
+
                 call_result = {
                     "run_id": run_id,
                     "source_sha": "a" * 40,
@@ -6700,7 +7055,9 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
                     return exchange
 
                 def record_socket_sample(phase: str, **_kwargs: object) -> dict:
-                    return {
+                    if socket_census_fails and phase == "after_teardown":
+                        raise RuntimeError("synthetic census failure")
+                    sample = {
                         "phase": phase,
                         "port": 8360,
                         "observed": True,
@@ -6708,6 +7065,21 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
                         "listener_pids": [12345] if phase == "host_ready" else [],
                         "failure_code": None,
                     }
+                    sample_path = run_directory / ("socket-sample-%s.json" % phase)
+                    raw_sample = json.dumps(
+                        sample, ensure_ascii=True, sort_keys=True, separators=(",", ":")
+                    ).encode("ascii")
+                    sample_path.write_bytes(raw_sample)
+                    return {
+                        **sample,
+                        "evidence_path": sample_path.relative_to(PROJECT_ROOT).as_posix(),
+                        "evidence_sha256": hashlib.sha256(raw_sample).hexdigest(),
+                    }
+
+                def record_listener_census(port: int, **_kwargs: object) -> dict:
+                    if teardown_listener_present and port == profile_runner.HOST_PORT:
+                        return self._listener_census(port, [54321])
+                    return self._listener_census(port)
 
                 def record_port_check(port: int) -> bool:
                     checked_ports.append(port)
@@ -6863,6 +7235,19 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
                         ),
                         mock.patch.object(
                             profile_runner,
+                            "_listener_census_observation",
+                            side_effect=record_listener_census,
+                        ),
+                        mock.patch.object(
+                            profile_runner.time,
+                            "monotonic_ns",
+                            side_effect=monotonic_ns,
+                        ),
+                        mock.patch.object(
+                            profile_runner.time, "sleep", side_effect=sleep_seconds
+                        ),
+                        mock.patch.object(
+                            profile_runner,
                             "_worker_result_path_for_run",
                             side_effect=lambda _run_id, _preflight_run_id: (
                                 run_directory / "worker-result.json"
@@ -6998,7 +7383,7 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
             )
             self.assertEqual(
                 successful_port_checks,
-                [8360, 8370, 8360, 8370, 8360, 8370],
+                [8360, 8370, 8360, 8370],
             )
             self.assertTrue(
                 profile_runner._valid_live_window_lock_record(created_locks[-1].record)
@@ -7024,6 +7409,103 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
                 CharacterizationError, "capture_driver_first_exchange_incomplete"
             ):
                 run_characterization("negative-flow", failed_exchange)
+            with self.assertRaisesRegex(
+                CharacterizationError,
+                "process_census_after_teardown_failed_RuntimeError",
+            ):
+                run_characterization(
+                    "census-failure",
+                    driver_success,
+                    socket_census_fails=True,
+                )
+            self.assertTrue(created_locks[-1].held)
+
+            with self.assertRaisesRegex(
+                CharacterizationError, "teardown_listener_present"
+            ):
+                run_characterization(
+                    "teardown-listener-present",
+                    driver_success,
+                    teardown_listener_present=True,
+                )
+            self.assertTrue(created_locks[-1].held)
+            failed_profile_path = (
+                evidence_root
+                / "teardown-listener-present"
+                / "profile-evidence.json"
+            )
+            failed_profile = json.loads(
+                failed_profile_path.read_text(encoding="utf-8")
+            )
+            failed_teardown_descriptor = failed_profile["teardown_evidence"]
+            failed_teardown_path = (
+                PROJECT_ROOT / failed_teardown_descriptor["path"]
+            )
+            self.assertEqual(
+                failed_teardown_descriptor["sha256"],
+                hashlib.sha256(failed_teardown_path.read_bytes()).hexdigest(),
+            )
+            failed_teardown = json.loads(
+                failed_teardown_path.read_text(encoding="utf-8")
+            )
+            self.assertEqual(failed_teardown["schema_version"], 2)
+            self.assertEqual(
+                failed_profile["failure_code"], "teardown_listener_present"
+            )
+            self.assertEqual(failed_profile["outcome"], "failed")
+            self.assertFalse(failed_profile["teardown"]["lock_released"])
+            self.assertFalse(failed_teardown["shared_lock"]["release_attempted"])
+            self.assertFalse(failed_teardown["shared_lock"]["release_succeeded"])
+            self.assertFalse(failed_teardown["shared_lock"]["lock_directory_removed"])
+            self.assertIsNone(failed_teardown["shared_lock"]["release_record"])
+            self.assertIsNone(failed_teardown["shared_lock"]["durable_record"])
+            failed_wait = failed_teardown["teardown_wait"]
+            self.assertEqual(failed_wait["status"], "failed")
+            self.assertEqual(
+                failed_wait["failure_code"], "teardown_listener_present"
+            )
+            self.assertEqual(failed_wait["initial"], failed_wait["final"])
+            self.assertEqual(len(failed_wait["attempts"]), 1)
+            failed_attempt = failed_wait["final"]
+            self.assertEqual(
+                failed_attempt["port_observations"],
+                {"8360": None, "8370": None},
+            )
+            self.assertEqual(
+                failed_attempt["listener_census"]["8360"]["listener_pids"],
+                [54321],
+            )
+            self.assertIsNone(
+                failed_attempt["listener_census"]["8370"]
+            )
+            final_process_census = failed_wait["final_process_census"]
+            self.assertEqual(final_process_census["phase"], "after_teardown")
+            self.assertTrue(final_process_census["observed"])
+            self.assertEqual(
+                final_process_census["listener_pids"], []
+            )
+            self.assertEqual(
+                failed_teardown["socket_census"]["path"],
+                final_process_census["path"],
+            )
+            self.assertEqual(
+                failed_teardown["socket_census"]["sha256"],
+                final_process_census["sha256"],
+            )
+            self.assertEqual(
+                failed_teardown["socket_census"]["listener_pids"], []
+            )
+            final_sample = failed_profile["process_census"]["socket_pid_samples"][-1]
+            self.assertEqual(
+                final_process_census["path"], final_sample["evidence_path"]
+            )
+            self.assertEqual(
+                final_process_census["sha256"], final_sample["evidence_sha256"]
+            )
+            self.assertGreater(
+                final_process_census["observed_monotonic_ns"],
+                failed_wait["completed_monotonic_ns"],
+            )
 
             checkpoint_evidence, _, _ = run_characterization(
                 "checkpoint-copy-held",
@@ -7656,6 +8138,46 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
                 self.assertTrue(holder_path.is_file())
                 self.assertEqual(len(log_path.read_text(encoding="utf-8").splitlines()), 1)
                 self.assertTrue(lock.release(self._release_record(record)))
+
+    def test_live_window_lock_release_schema_dispatch_is_strict(self) -> None:
+        record = self._lock_record(run_id="release-schema-dispatch")
+        legacy = self._release_record(record)
+        version_two = self._release_record(
+            record,
+            teardown_evidence_schema_version=2,
+            teardown_wait_schema_version=1,
+            teardown_wait_sha256="a" * 64,
+            teardown_wait_elapsed_monotonic_ns=75_000_000_000,
+            teardown_wait_completed_monotonic_ns=100,
+            after_teardown_socket_sample_observed_monotonic_ns=101,
+        )
+
+        self.assertTrue(
+            profile_runner._valid_lock_release_record(legacy, record["booking_id"])
+        )
+        self.assertTrue(
+            profile_runner._valid_lock_release_record(
+                version_two, record["booking_id"]
+            )
+        )
+        self.assertFalse(
+            profile_runner._valid_lock_release_record(
+                {**legacy, "teardown_wait_schema_version": 1},
+                record["booking_id"],
+            )
+        )
+        self.assertFalse(
+            profile_runner._valid_lock_release_record(
+                {**version_two, "teardown_wait_sha256": None},
+                record["booking_id"],
+            )
+        )
+        self.assertFalse(
+            profile_runner._valid_lock_release_record(
+                {**version_two, "teardown_evidence_schema_version": 3},
+                record["booking_id"],
+            )
+        )
 
     def test_live_window_lock_does_not_release_a_replaced_holder(self) -> None:
         with tempfile.TemporaryDirectory(
