@@ -714,6 +714,12 @@ def run_preflight_rows(
                             "retained_evidence_sha256": startup_evidence.get(
                                 "retained_evidence_sha256"
                             ),
+                            "retained_validator_inputs_path": startup_evidence.get(
+                                "retained_validator_inputs_path"
+                            ),
+                            "retained_validator_inputs_sha256": startup_evidence.get(
+                                "retained_validator_inputs_sha256"
+                            ),
                         }
                     )
                     if fixture_id == plan.fixture_id:
@@ -849,6 +855,12 @@ def run_preflight_rows(
                                 "retained_evidence_sha256": checkpoint_evidence.get(
                                     "retained_evidence_sha256"
                                 ),
+                                "retained_validator_inputs_path": checkpoint_evidence.get(
+                                    "retained_validator_inputs_path"
+                                ),
+                                "retained_validator_inputs_sha256": checkpoint_evidence.get(
+                                    "retained_validator_inputs_sha256"
+                                ),
                                 "resume_checkpoint_sha256": checkpoint[
                                     "state_sha256"
                                 ],
@@ -921,6 +933,12 @@ def run_preflight_rows(
                             ),
                             "retained_evidence_sha256": resume_evidence.get(
                                 "retained_evidence_sha256"
+                            ),
+                            "retained_validator_inputs_path": resume_evidence.get(
+                                "retained_validator_inputs_path"
+                            ),
+                            "retained_validator_inputs_sha256": resume_evidence.get(
+                                "retained_validator_inputs_sha256"
                             ),
                         }
                     )

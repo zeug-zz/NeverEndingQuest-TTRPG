@@ -25,6 +25,10 @@ _MAX_EVIDENCE_BYTES = 2_000_000
 _MAX_PROFILE_ARTIFACT_BYTES = 512_000
 _AREA_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 _SAFE_MODULE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 _.-]{0,127}$")
+_PROFILE_RUNNER_SOURCE = "scripts/live_gate_preflight_profile_runner.py"
+_SUMMARY_SOURCE = "core/ai/adv_summary.py"
+_VALIDATOR_INPUTS_DIRECTORY = "retained/validator-inputs"
+_VALIDATOR_INPUTS_MANIFEST = _VALIDATOR_INPUTS_DIRECTORY + "/manifest.json"
 
 
 def retain_summary_child_artifacts(
@@ -550,6 +554,7 @@ class RetainedValidationSnapshot:
 
     source_sha: str
     summary_source_bytes: bytes
+    runner_source_bytes: bytes
     git_common_directory: Path
 
 
@@ -564,16 +569,24 @@ def capture_retained_validation_snapshot(source_sha: str) -> RetainedValidationS
         )
     try:
         summary_source_bytes = runner._git_source_bytes_at_sha(
-            source_sha, "core/ai/adv_summary.py"
+            source_sha, _SUMMARY_SOURCE
         )
         git_common_directory = runner._git_common_directory()
+        runner_source_bytes = _read_project_source_bytes(
+            _PROFILE_RUNNER_SOURCE, "profile runner source"
+        )
     except runner.CharacterizationError as exc:
+        raise RetainedEvidenceError(
+            "retained validation snapshot is unavailable"
+        ) from exc
+    except RetainedEvidenceError as exc:
         raise RetainedEvidenceError(
             "retained validation snapshot is unavailable"
         ) from exc
     return RetainedValidationSnapshot(
         source_sha=source_sha,
         summary_source_bytes=summary_source_bytes,
+        runner_source_bytes=runner_source_bytes,
         git_common_directory=git_common_directory,
     )
 
@@ -589,6 +602,9 @@ def _validate_retained_validation_snapshot(
         or not isinstance(snapshot.summary_source_bytes, bytes)
         or not snapshot.summary_source_bytes
         or len(snapshot.summary_source_bytes) > _MAX_PROFILE_ARTIFACT_BYTES
+        or not isinstance(snapshot.runner_source_bytes, bytes)
+        or not snapshot.runner_source_bytes
+        or len(snapshot.runner_source_bytes) > _MAX_PROFILE_ARTIFACT_BYTES
         or not isinstance(snapshot.git_common_directory, Path)
     ):
         raise RetainedEvidenceError("retained validation snapshot identity differs")
@@ -614,6 +630,458 @@ def _validate_retained_validation_snapshot(
     return snapshot
 
 
+def _validator_input_path(
+    evidence_relative: PurePosixPath,
+    kind: str,
+    source_path: str,
+    digest: str,
+) -> str:
+    key_hash = hashlib.sha256((kind + "\0" + source_path).encode("utf-8")).hexdigest()[:20]
+    return (
+        evidence_relative
+        / _VALIDATOR_INPUTS_DIRECTORY
+        / "data"
+        / kind
+        / (key_hash + "-" + digest + ".bin")
+    ).as_posix()
+
+
+def _capture_validator_input_bundle(
+    evidence: Mapping[str, Any],
+    *,
+    evidence_directory: Path,
+    run_id: str,
+    source_sha: str,
+    snapshot: RetainedValidationSnapshot,
+) -> tuple[str, str]:
+    """Copy external validator inputs before the row sandbox is cleaned up."""
+    from scripts import live_gate_preflight_profile_runner as runner
+    from scripts import live_gate_preflight_profiles as profiles
+
+    evidence_relative = PurePosixPath(
+        evidence_directory.relative_to(PROJECT_ROOT).as_posix()
+    )
+    manifest_relative = evidence_relative / _VALIDATOR_INPUTS_MANIFEST
+    manifest_path = PROJECT_ROOT.joinpath(*manifest_relative.parts)
+    if manifest_path.exists() or manifest_path.is_symlink():
+        raise RetainedEvidenceError("retained validator input bundle already exists")
+
+    inputs: dict[tuple[str, str], tuple[bytes, dict[str, int]]] = {}
+
+    def add(kind: str, source_path: str, raw: bytes, **metadata: int) -> None:
+        if not isinstance(raw, bytes) or not raw or len(raw) > _MAX_PROFILE_ARTIFACT_BYTES:
+            raise RetainedEvidenceError("retained validator input is invalid or oversized")
+        key = (kind, source_path)
+        value = (raw, metadata)
+        if key in inputs and inputs[key] != value:
+            raise RetainedEvidenceError("retained validator input identity is inconsistent")
+        inputs[key] = value
+
+    runner_hash = hashlib.sha256(snapshot.runner_source_bytes).hexdigest()
+    teardown = evidence.get("teardown_evidence")
+    if (
+        not isinstance(teardown, Mapping)
+        or not isinstance(teardown.get("path"), str)
+        or not isinstance(teardown.get("sha256"), str)
+    ):
+        raise RetainedEvidenceError("retained teardown evidence path or hash is invalid")
+    sidecar, _sidecar_raw = _read_hashed_json(
+        teardown["path"], teardown["sha256"], "teardown evidence"
+    )
+    if sidecar.get("runner_source_sha256") != runner_hash:
+        raise RetainedEvidenceError("retained profile runner source identity differs")
+    add("runner_source", _PROFILE_RUNNER_SOURCE, snapshot.runner_source_bytes)
+
+    calls = evidence.get("calls")
+    if not isinstance(calls, list):
+        raise RetainedEvidenceError("retained router call inputs are malformed")
+    source_hashes: dict[str, str] = {}
+    for call in calls:
+        if not isinstance(call, Mapping):
+            raise RetainedEvidenceError("retained router call input is malformed")
+        source_path = call.get("source_file")
+        source_hash = call.get("source_file_sha256")
+        if (
+            not isinstance(source_path, str)
+            or not isinstance(source_hash, str)
+            or _SHA256.fullmatch(source_hash) is None
+        ):
+            raise RetainedEvidenceError("retained router call source identity is invalid")
+        previous = source_hashes.setdefault(source_path, source_hash)
+        if previous != source_hash:
+            raise RetainedEvidenceError("retained router call source hashes conflict")
+    for source_path, expected_hash in sorted(source_hashes.items()):
+        try:
+            source_file = profiles._safe_source_path(
+                PROJECT_ROOT, source_path, "recorded router call source"
+            )
+        except profiles.ProfileValidationError as exc:
+            raise RetainedEvidenceError(
+                "recorded router call source cannot be copied"
+            ) from exc
+        raw = _read_project_source_bytes(
+            source_file.relative_to(PROJECT_ROOT).as_posix(),
+            "recorded router call source",
+        )
+        if hashlib.sha256(raw).hexdigest() != expected_hash:
+            raise RetainedEvidenceError("recorded router call source hash differs")
+        add("call_source", source_path, raw)
+
+    checkpoint = evidence.get("checkpoint_attestation")
+    if checkpoint is not None:
+        if (
+            not isinstance(checkpoint, Mapping)
+            or not isinstance(checkpoint.get("path"), str)
+            or not isinstance(checkpoint.get("sha256"), str)
+            or _SHA256.fullmatch(checkpoint["sha256"]) is None
+        ):
+            raise RetainedEvidenceError("retained checkpoint attestation reference is invalid")
+        raw = _read_bounded_capture_file(checkpoint["path"], "checkpoint attestation")
+        if hashlib.sha256(raw).hexdigest() != checkpoint["sha256"]:
+            raise RetainedEvidenceError("retained checkpoint attestation hash differs")
+        add("checkpoint_attestation", checkpoint["path"], raw)
+
+    summary_child = evidence.get("adv_summary_child")
+    summary_launch_count = (
+        summary_child.get("launch_count")
+        if isinstance(summary_child, Mapping)
+        else None
+    )
+    if type(summary_launch_count) is not int or summary_launch_count < 0:
+        raise RetainedEvidenceError("retained summary child launch count is invalid")
+    if summary_launch_count:
+        add("summary_source", _SUMMARY_SOURCE, snapshot.summary_source_bytes)
+
+    shared_lock = sidecar.get("shared_lock")
+    durable_reference = (
+        shared_lock.get("durable_record")
+        if isinstance(shared_lock, Mapping)
+        else None
+    )
+    release_record = (
+        shared_lock.get("release_record")
+        if isinstance(shared_lock, Mapping)
+        else None
+    )
+    if not isinstance(release_record, Mapping):
+        raise RetainedEvidenceError("durable shared lock release record is missing")
+    actual_record, _digest, raw, boundary = _read_durable_release_record(
+        durable_reference,
+        release_record=release_record,
+        runner=runner,
+        git_common_directory=snapshot.git_common_directory,
+    )
+    if not _strict_json_equal(actual_record, dict(release_record)):
+        raise RetainedEvidenceError(
+            "durable shared lock release record differs from sidecar"
+        )
+    if not isinstance(durable_reference, Mapping):
+        raise RetainedEvidenceError("durable shared lock release reference is invalid")
+    durable_path = durable_reference.get("path")
+    byte_offset = durable_reference.get("byte_offset")
+    byte_length = durable_reference.get("byte_length")
+    if (
+        not isinstance(durable_path, str)
+        or type(byte_offset) is not int
+        or type(byte_length) is not int
+    ):
+        raise RetainedEvidenceError("durable shared lock release reference is invalid")
+    add(
+        "durable_release_record",
+        durable_path,
+        raw,
+        byte_offset=byte_offset,
+        byte_length=byte_length,
+    )
+    if byte_offset > 0:
+        add(
+            "durable_release_boundary",
+            durable_path,
+            boundary,
+            byte_offset=byte_offset,
+        )
+
+    try:
+        common = snapshot.git_common_directory.resolve(strict=True)
+        common_relative = common.relative_to(PROJECT_ROOT.resolve(strict=True)).as_posix()
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise RetainedEvidenceError(
+            "durable shared lock common directory is unsafe"
+        ) from exc
+    entries: list[dict[str, Any]] = []
+    for (kind, source_path), (raw, metadata) in sorted(inputs.items()):
+        digest = hashlib.sha256(raw).hexdigest()
+        destination = _validator_input_path(
+            evidence_relative, kind, source_path, digest
+        )
+        _copy_capture_artifact(
+            raw,
+            source_path=source_path,
+            destination_path=destination,
+            evidence_directory=evidence_directory,
+            run_id=run_id,
+            role="validator_input",
+            provenance="captured_before_sandbox_cleanup",
+        )
+        entry: dict[str, Any] = {
+            "kind": kind,
+            "source_path": source_path,
+            "path": destination,
+            "sha256": digest,
+            "size_bytes": len(raw),
+        }
+        entry.update(metadata)
+        entries.append(entry)
+
+    manifest = {
+        "schema_version": 1,
+        "run_id": run_id,
+        "source_sha": source_sha,
+        "git_common_directory": common_relative,
+        "inputs": entries,
+    }
+    manifest_raw = json.dumps(
+        manifest, ensure_ascii=True, sort_keys=True, separators=(",", ":")
+    ).encode("ascii")
+    artifact = _copy_capture_artifact(
+        manifest_raw,
+        source_path="retained validator input manifest",
+        destination_path=manifest_relative.as_posix(),
+        evidence_directory=evidence_directory,
+        run_id=run_id,
+        role="validator_input_manifest",
+        provenance="captured_before_sandbox_cleanup",
+    )
+    return artifact["path"], artifact["sha256"]
+
+
+def _load_validator_input_bundle(
+    evidence: Mapping[str, Any],
+    *,
+    evidence_directory: Path,
+    run_id: str,
+    source_sha: str,
+    manifest_path: str,
+    manifest_sha256: str,
+) -> tuple[dict[tuple[str, str], bytes], str, str]:
+    """Verify the retained bundle and return its bytes without external reads."""
+    evidence_relative = PurePosixPath(
+        evidence_directory.relative_to(PROJECT_ROOT).as_posix()
+    )
+    expected_manifest = (evidence_relative / _VALIDATOR_INPUTS_MANIFEST).as_posix()
+    if (
+        manifest_path != expected_manifest
+        or not isinstance(manifest_sha256, str)
+        or _SHA256.fullmatch(manifest_sha256) is None
+    ):
+        raise RetainedEvidenceError("retained validator input bundle reference is invalid")
+    manifest_raw = _read_bytes(expected_manifest, "validator input manifest")
+    manifest_digest = hashlib.sha256(manifest_raw).hexdigest()
+    if manifest_digest != manifest_sha256:
+        raise RetainedEvidenceError("retained validator input manifest hash differs")
+    manifest = _decode_json(manifest_raw, "validator input manifest")
+    if (
+        not isinstance(manifest, Mapping)
+        or set(manifest)
+        != {
+            "schema_version",
+            "run_id",
+            "source_sha",
+            "git_common_directory",
+            "inputs",
+        }
+        or type(manifest.get("schema_version")) is not int
+        or manifest.get("schema_version") != 1
+        or manifest.get("run_id") != run_id
+        or manifest.get("source_sha") != source_sha
+    ):
+        raise RetainedEvidenceError("retained validator input manifest identity differs")
+    common_relative = manifest.get("git_common_directory")
+    common = PurePosixPath(common_relative) if isinstance(common_relative, str) else None
+    if (
+        common is None
+        or common.is_absolute()
+        or "\\" in str(common_relative)
+        or ".." in common.parts
+        or "." in common.parts
+        or not common.parts
+    ):
+        raise RetainedEvidenceError("retained validator input Git identity is invalid")
+
+    teardown = evidence.get("teardown_evidence")
+    if (
+        not isinstance(teardown, Mapping)
+        or not isinstance(teardown.get("path"), str)
+        or not isinstance(teardown.get("sha256"), str)
+    ):
+        raise RetainedEvidenceError("retained teardown evidence path or hash is invalid")
+    sidecar, _sidecar_raw = _read_hashed_json(
+        teardown["path"], teardown["sha256"], "teardown evidence"
+    )
+    shared_lock = sidecar.get("shared_lock")
+    durable_reference = (
+        shared_lock.get("durable_record")
+        if isinstance(shared_lock, Mapping)
+        else None
+    )
+    if not isinstance(durable_reference, Mapping):
+        raise RetainedEvidenceError("durable shared lock release reference is invalid")
+    byte_offset = durable_reference.get("byte_offset")
+    byte_length = durable_reference.get("byte_length")
+    line_sha256 = durable_reference.get("line_sha256")
+    if (
+        type(byte_offset) is not int
+        or byte_offset < 0
+        or type(byte_length) is not int
+        or byte_length < 2
+        or not isinstance(line_sha256, str)
+        or _SHA256.fullmatch(line_sha256) is None
+    ):
+        raise RetainedEvidenceError("durable shared lock release reference is invalid")
+    expected_log = (common / "neq-coordination" / "bookings.log").as_posix()
+    if durable_reference.get("path") != expected_log:
+        raise RetainedEvidenceError("retained validator input durable-log identity differs")
+
+    sidecar_runner_hash = sidecar.get("runner_source_sha256")
+    if not isinstance(sidecar_runner_hash, str) or _SHA256.fullmatch(
+        sidecar_runner_hash
+    ) is None:
+        raise RetainedEvidenceError("retained profile runner source identity is invalid")
+    expected: dict[tuple[str, str], tuple[str, dict[str, int]]] = {
+        ("runner_source", _PROFILE_RUNNER_SOURCE): (
+            sidecar_runner_hash,
+            {},
+        ),
+        ("durable_release_record", str(durable_reference.get("path"))): (
+            line_sha256,
+            {
+                "byte_offset": byte_offset,
+                "byte_length": byte_length,
+            },
+        ),
+    }
+    if byte_offset > 0:
+        expected[("durable_release_boundary", str(durable_reference["path"]))] = (
+            hashlib.sha256(b"\n").hexdigest(),
+            {"byte_offset": byte_offset},
+        )
+    calls = evidence.get("calls")
+    if not isinstance(calls, list):
+        raise RetainedEvidenceError("retained router call inputs are malformed")
+    call_hashes: dict[str, str] = {}
+    for call in calls:
+        if not isinstance(call, Mapping):
+            raise RetainedEvidenceError("retained router call input is malformed")
+        path = call.get("source_file")
+        digest = call.get("source_file_sha256")
+        if (
+            not isinstance(path, str)
+            or not isinstance(digest, str)
+            or _SHA256.fullmatch(digest) is None
+        ):
+            raise RetainedEvidenceError("retained router call source identity is invalid")
+        prior = call_hashes.setdefault(path, digest)
+        if prior != digest:
+            raise RetainedEvidenceError("retained router call source hashes conflict")
+    expected.update({("call_source", path): (digest, {}) for path, digest in call_hashes.items()})
+
+    checkpoint = evidence.get("checkpoint_attestation")
+    if checkpoint is not None:
+        if (
+            not isinstance(checkpoint, Mapping)
+            or not isinstance(checkpoint.get("path"), str)
+            or not isinstance(checkpoint.get("sha256"), str)
+        ):
+            raise RetainedEvidenceError("retained checkpoint attestation reference is invalid")
+        expected[("checkpoint_attestation", checkpoint["path"])] = (
+            checkpoint["sha256"],
+            {},
+        )
+
+    summary_child = evidence.get("adv_summary_child")
+    summary_launch_count = (
+        summary_child.get("launch_count")
+        if isinstance(summary_child, Mapping)
+        else None
+    )
+    if type(summary_launch_count) is not int or summary_launch_count < 0:
+        raise RetainedEvidenceError("retained summary child launch count is invalid")
+    if summary_launch_count:
+        artifacts = evidence.get("summary_child_artifacts")
+        raw_artifacts = (
+            artifacts.get("artifacts") if isinstance(artifacts, Mapping) else None
+        )
+        script_sources = (
+            [
+                artifact
+                for artifact in raw_artifacts
+                if isinstance(artifact, Mapping)
+                and artifact.get("role") == "script_source"
+            ]
+            if isinstance(raw_artifacts, list)
+            else []
+        )
+        if (
+            len(script_sources) != 1
+            or not isinstance(script_sources[0].get("sha256"), str)
+            or _SHA256.fullmatch(script_sources[0]["sha256"]) is None
+        ):
+            raise RetainedEvidenceError("retained summary child source identity is invalid")
+        expected[("summary_source", _SUMMARY_SOURCE)] = (
+            script_sources[0]["sha256"],
+            {},
+        )
+
+    raw_entries = manifest.get("inputs")
+    if not isinstance(raw_entries, list):
+        raise RetainedEvidenceError("retained validator input manifest is malformed")
+    entries: dict[tuple[str, str], Mapping[str, Any]] = {}
+    for entry in raw_entries:
+        if not isinstance(entry, Mapping):
+            raise RetainedEvidenceError("retained validator input entry is malformed")
+        key = (entry.get("kind"), entry.get("source_path"))
+        if (
+            not isinstance(key[0], str)
+            or not isinstance(key[1], str)
+            or key in entries
+        ):
+            raise RetainedEvidenceError("retained validator input identity is malformed")
+        entries[key] = entry
+    if set(entries) != set(expected):
+        raise RetainedEvidenceError("retained validator input bundle is incomplete")
+
+    input_bytes: dict[tuple[str, str], bytes] = {}
+    for key, (expected_digest, metadata) in expected.items():
+        entry = entries[key]
+        kind, source_path = key
+        fields = {"kind", "source_path", "path", "sha256", "size_bytes"} | set(metadata)
+        if set(entry) != fields:
+            raise RetainedEvidenceError("retained validator input fields are malformed")
+        digest = entry.get("sha256")
+        path_value = entry.get("path")
+        size = entry.get("size_bytes")
+        if (
+            not isinstance(digest, str)
+            or _SHA256.fullmatch(digest) is None
+            or digest != expected_digest
+            or type(size) is not int
+            or size < 1
+            or size > _MAX_PROFILE_ARTIFACT_BYTES
+            or not isinstance(path_value, str)
+            or path_value
+            != _validator_input_path(evidence_relative, kind, source_path, digest)
+            or any(entry.get(name) != value for name, value in metadata.items())
+        ):
+            raise RetainedEvidenceError("retained validator input identity differs")
+        raw = _read_bytes(path_value, "validator input")
+        if len(raw) != size or hashlib.sha256(raw).hexdigest() != digest:
+            raise RetainedEvidenceError("retained validator input hash differs")
+        if kind == "durable_release_boundary" and raw != b"\n":
+            raise RetainedEvidenceError("durable shared lock release boundary differs")
+        input_bytes[key] = raw
+    return input_bytes, manifest_digest, str(common)
+
+
 def validate_retained_supervised_evidence(
     result: Mapping[str, Any],
     *,
@@ -626,6 +1094,9 @@ def validate_retained_supervised_evidence(
     preflight_run_id: str,
     comparison_identity: Mapping[str, Any] | None = None,
     validation_snapshot: RetainedValidationSnapshot | None = None,
+    capture_validator_inputs: bool = True,
+    validator_input_bundle_path: str | None = None,
+    validator_input_bundle_sha256: str | None = None,
 ) -> dict[str, Any]:
     """Validate retained sidecars and return a summary derived from disk."""
     from scripts import live_gate_preflight_profile_runner as runner
@@ -676,6 +1147,38 @@ def validate_retained_supervised_evidence(
         dict(returned_evidence), evidence
     ):
         raise RetainedEvidenceError("returned profile summary differs from retained evidence")
+    evidence_directory_path = _safe_project_tmp_directory(
+        evidence_directory.as_posix()
+    )
+    if capture_validator_inputs:
+        if validation_snapshot is None:
+            raise RetainedEvidenceError(
+                "retained validator input capture requires a validation snapshot"
+            )
+        validator_input_bundle_path, validator_input_bundle_sha256 = (
+            _capture_validator_input_bundle(
+                evidence,
+                evidence_directory=evidence_directory_path,
+                run_id=row_run_id,
+                source_sha=source_sha,
+                snapshot=validation_snapshot,
+            )
+        )
+    elif (
+        not isinstance(validator_input_bundle_path, str)
+        or not isinstance(validator_input_bundle_sha256, str)
+    ):
+        raise RetainedEvidenceError("retained validator input bundle reference is missing")
+    validator_input_snapshots, validator_input_bundle_sha256, git_common_relative = (
+        _load_validator_input_bundle(
+            evidence,
+            evidence_directory=evidence_directory_path,
+            run_id=row_run_id,
+            source_sha=source_sha,
+            manifest_path=validator_input_bundle_path,
+            manifest_sha256=validator_input_bundle_sha256,
+        )
+    )
     journal_descriptor = evidence.get("guard_event_journal")
     expected_journal_path = (evidence_directory / "guard-events.jsonl").as_posix()
     if (
@@ -707,6 +1210,22 @@ def validate_retained_supervised_evidence(
             "fixed_seed": plan.fixed_seed,
         }
     }
+    trusted_summary_source: tuple[str, bytes] | None = None
+    summary_child = evidence.get("adv_summary_child")
+    summary_launch_count = (
+        summary_child.get("launch_count")
+        if isinstance(summary_child, Mapping)
+        else None
+    )
+    if type(summary_launch_count) is int and summary_launch_count > 0:
+        summary_source_bytes = validator_input_snapshots.get(
+            ("summary_source", _SUMMARY_SOURCE)
+        )
+        if not isinstance(summary_source_bytes, bytes):
+            raise RetainedEvidenceError(
+                "retained summary child source copy is unavailable"
+            )
+        trusted_summary_source = (source_sha, summary_source_bytes)
     try:
         profiles._validate_profile_evidence(
             PROJECT_ROOT,
@@ -723,15 +1242,9 @@ def validate_retained_supervised_evidence(
             pythonpath=intended_identity.get("pythonpath"),
             call_count=evidence.get("call_count"),
             call_sites=evidence.get("call_sites"),
-            evidence_directory=PROJECT_ROOT / evidence_directory,
-            trusted_summary_source=(
-                (
-                    validation_snapshot.source_sha,
-                    validation_snapshot.summary_source_bytes,
-                )
-                if validation_snapshot is not None
-                else None
-            ),
+            evidence_directory=evidence_directory_path,
+            trusted_summary_source=trusted_summary_source,
+            validator_input_snapshots=validator_input_snapshots,
         )
     except profiles.ProfileValidationError as exc:
         raise RetainedEvidenceError(
@@ -758,6 +1271,40 @@ def validate_retained_supervised_evidence(
         runner=runner,
         comparison_identity=comparison_identity,
     )
+    teardown_descriptor = evidence.get("teardown_evidence")
+    if not isinstance(teardown_descriptor, Mapping):
+        raise RetainedEvidenceError("retained teardown evidence path or hash is invalid")
+    teardown_sidecar, _teardown_sidecar_raw = _read_hashed_json(
+        teardown_descriptor.get("path"),
+        teardown_descriptor.get("sha256"),
+        "teardown evidence",
+    )
+    shared_lock = teardown_sidecar.get("shared_lock")
+    durable_reference = (
+        shared_lock.get("durable_record")
+        if isinstance(shared_lock, Mapping)
+        else None
+    )
+    durable_path = (
+        durable_reference.get("path")
+        if isinstance(durable_reference, Mapping)
+        else None
+    )
+    if not isinstance(durable_path, str):
+        raise RetainedEvidenceError("durable shared lock release reference is invalid")
+    runner_source_bytes = validator_input_snapshots.get(
+        ("runner_source", _PROFILE_RUNNER_SOURCE)
+    )
+    durable_record_bytes = validator_input_snapshots.get(
+        ("durable_release_record", durable_path)
+    )
+    durable_boundary_bytes = validator_input_snapshots.get(
+        ("durable_release_boundary", durable_path)
+    )
+    if not isinstance(runner_source_bytes, bytes) or not isinstance(
+        durable_record_bytes, bytes
+    ):
+        raise RetainedEvidenceError("retained validator input bundle is incomplete")
     teardown_proof = _read_and_validate_teardown(
         evidence,
         evidence_directory=evidence_directory,
@@ -770,11 +1317,10 @@ def validate_retained_supervised_evidence(
         worker_stop_proof=worker_stop_proof,
         runner=runner,
         comparison_identity=comparison_identity,
-        git_common_directory=(
-            validation_snapshot.git_common_directory
-            if validation_snapshot is not None
-            else None
-        ),
+        runner_source_bytes=runner_source_bytes,
+        durable_record_bytes=durable_record_bytes,
+        durable_boundary_bytes=durable_boundary_bytes,
+        git_common_directory_relative=git_common_relative,
     )
     journal_raw_after = _read_bytes(expected_journal_path, "guard-event journal")
     if journal_raw_after != journal_raw_before:
@@ -801,6 +1347,8 @@ def validate_retained_supervised_evidence(
             "call_count": call_count,
             "teardown_evidence_sha256": teardown_proof["sha256"],
         },
+        "retained_validator_inputs_path": validator_input_bundle_path,
+        "retained_validator_inputs_sha256": validator_input_bundle_sha256,
         **(
             {"comparison_identity": dict(comparison_identity)}
             if comparison_identity is not None
@@ -997,7 +1545,10 @@ def _read_and_validate_teardown(
     worker_stop_proof: Mapping[str, Any],
     runner: Any,
     comparison_identity: Mapping[str, Any] | None,
-    git_common_directory: Path | None,
+    runner_source_bytes: bytes,
+    durable_record_bytes: bytes,
+    durable_boundary_bytes: bytes | None,
+    git_common_directory_relative: str,
 ) -> dict[str, str]:
     descriptor = evidence.get("teardown_evidence")
     expected_path = (evidence_directory / "teardown-evidence.json").as_posix()
@@ -1030,9 +1581,13 @@ def _read_and_validate_teardown(
         expected_fields.add("teardown_wait")
     if comparison_identity is not None:
         expected_fields.add("comparison_identity")
-    runner_source_sha256 = hashlib.sha256(
-        (PROJECT_ROOT / "scripts" / "live_gate_preflight_profile_runner.py").read_bytes()
-    ).hexdigest()
+    if (
+        not isinstance(runner_source_bytes, bytes)
+        or not runner_source_bytes
+        or len(runner_source_bytes) > _MAX_PROFILE_ARTIFACT_BYTES
+    ):
+        raise RetainedEvidenceError("retained profile runner source copy is invalid")
+    runner_source_sha256 = hashlib.sha256(runner_source_bytes).hexdigest()
     if (
         set(sidecar) != expected_fields
         or type(sidecar.get("schema_version")) is not int
@@ -1305,11 +1860,15 @@ def _read_and_validate_teardown(
         )
     ):
         raise RetainedEvidenceError("retained shared lock release record identity differs")
-    actual_record, durable_digest = _read_durable_release_record(
+    actual_record, durable_digest, _durable_record_raw, _durable_boundary = (
+        _read_durable_release_record(
         durable_reference,
         release_record=release_record,
         runner=runner,
-        git_common_directory=git_common_directory,
+        git_common_directory_relative=git_common_directory_relative,
+        retained_record_bytes=durable_record_bytes,
+        retained_boundary_bytes=durable_boundary_bytes,
+        )
     )
     if not _strict_json_equal(actual_record, dict(release_record)):
         raise RetainedEvidenceError("durable shared lock release record differs from sidecar")
@@ -1623,12 +2182,39 @@ def _read_durable_release_record(
     release_record: Mapping[str, Any],
     runner: Any,
     git_common_directory: Path | None = None,
-) -> tuple[dict[str, Any], str]:
+    git_common_directory_relative: str | None = None,
+    retained_record_bytes: bytes | None = None,
+    retained_boundary_bytes: bytes | None = None,
+) -> tuple[dict[str, Any], str, bytes, bytes | None]:
     fields = {"path", "byte_offset", "byte_length", "line_sha256"}
     if not isinstance(reference, Mapping) or set(reference) != fields:
         raise RetainedEvidenceError("durable shared lock release reference is invalid")
-    if git_common_directory is None:
+    if git_common_directory is not None and git_common_directory_relative is not None:
+        raise RetainedEvidenceError("durable shared lock Git identity is ambiguous")
+    if git_common_directory_relative is not None:
+        common_relative = PurePosixPath(git_common_directory_relative)
+        if (
+            common_relative.is_absolute()
+            or "\\" in git_common_directory_relative
+            or not common_relative.parts
+            or "." in common_relative.parts
+            or ".." in common_relative.parts
+            or common_relative.as_posix() != git_common_directory_relative
+        ):
+            raise RetainedEvidenceError("durable shared lock common directory is unsafe")
+        expected_relative = (
+            common_relative / "neq-coordination" / "bookings.log"
+        ).as_posix()
+    elif git_common_directory is None:
         common_directory = runner._git_common_directory()
+        try:
+            expected_relative = (
+                common_directory / "neq-coordination" / "bookings.log"
+            ).relative_to(PROJECT_ROOT).as_posix()
+        except ValueError as exc:
+            raise RetainedEvidenceError(
+                "durable shared lock release path is outside the project"
+            ) from exc
     else:
         try:
             root = PROJECT_ROOT.resolve(strict=True)
@@ -1642,11 +2228,9 @@ def _read_durable_release_record(
             raise RetainedEvidenceError(
                 "durable shared lock release path is unsafe"
             )
-    expected_path = common_directory / "neq-coordination" / "bookings.log"
-    try:
-        expected_relative = expected_path.relative_to(PROJECT_ROOT).as_posix()
-    except ValueError as exc:
-        raise RetainedEvidenceError("durable shared lock release path is outside the project") from exc
+        expected_relative = (
+            relative_common / "neq-coordination" / "bookings.log"
+        ).as_posix()
     if (
         reference.get("path") != expected_relative
         or type(reference.get("byte_offset")) is not int
@@ -1658,35 +2242,68 @@ def _read_durable_release_record(
         or _SHA256.fullmatch(reference["line_sha256"]) is None
     ):
         raise RetainedEvidenceError("durable shared lock release reference is unsafe")
-    path = PROJECT_ROOT / expected_relative
-    cursor = PROJECT_ROOT
-    for part in PurePosixPath(expected_relative).parts:
-        cursor = cursor / part
-        if cursor.is_symlink():
-            raise RetainedEvidenceError("durable shared lock release path traverses a symlink")
-    descriptor: int | None = None
-    try:
-        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-        metadata = os.fstat(descriptor)
-        offset = reference["byte_offset"]
-        length = reference["byte_length"]
-        if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1 or metadata.st_size < offset + length:
-            raise RetainedEvidenceError("durable shared lock release log is invalid")
+    offset = reference["byte_offset"]
+    length = reference["byte_length"]
+    boundary: bytes | None = None
+    if retained_record_bytes is None:
+        if retained_boundary_bytes is not None:
+            raise RetainedEvidenceError("durable shared lock boundary copy is unexpected")
+        path = PROJECT_ROOT / expected_relative
+        cursor = PROJECT_ROOT
+        for part in PurePosixPath(expected_relative).parts:
+            cursor = cursor / part
+            if cursor.is_symlink():
+                raise RetainedEvidenceError(
+                    "durable shared lock release path traverses a symlink"
+                )
+        descriptor: int | None = None
+        try:
+            descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+            metadata = os.fstat(descriptor)
+            if (
+                not stat.S_ISREG(metadata.st_mode)
+                or metadata.st_nlink != 1
+                or metadata.st_size < offset + length
+            ):
+                raise RetainedEvidenceError("durable shared lock release log is invalid")
+            if offset:
+                os.lseek(descriptor, offset - 1, os.SEEK_SET)
+                boundary = os.read(descriptor, 1)
+                if boundary != b"\n":
+                    raise RetainedEvidenceError(
+                        "durable shared lock release offset is not a line boundary"
+                    )
+            os.lseek(descriptor, offset, os.SEEK_SET)
+            raw = os.read(descriptor, length)
+            if len(raw) != length or not raw.endswith(b"\n"):
+                raise RetainedEvidenceError(
+                    "durable shared lock release line is incomplete"
+                )
+        except RetainedEvidenceError:
+            raise
+        except OSError as exc:
+            raise RetainedEvidenceError(
+                "durable shared lock release log is unavailable"
+            ) from exc
+        finally:
+            if descriptor is not None:
+                os.close(descriptor)
+    else:
+        if not isinstance(retained_record_bytes, bytes):
+            raise RetainedEvidenceError("durable shared lock release copy is invalid")
+        raw = retained_record_bytes
         if offset:
-            os.lseek(descriptor, offset - 1, os.SEEK_SET)
-            if os.read(descriptor, 1) != b"\n":
-                raise RetainedEvidenceError("durable shared lock release offset is not a line boundary")
-        os.lseek(descriptor, offset, os.SEEK_SET)
-        raw = os.read(descriptor, length)
+            if retained_boundary_bytes != b"\n":
+                raise RetainedEvidenceError(
+                    "durable shared lock release boundary copy differs"
+                )
+            boundary = retained_boundary_bytes
+        elif retained_boundary_bytes is not None:
+            raise RetainedEvidenceError("durable shared lock boundary copy is unexpected")
         if len(raw) != length or not raw.endswith(b"\n"):
-            raise RetainedEvidenceError("durable shared lock release line is incomplete")
-    except RetainedEvidenceError:
-        raise
-    except OSError as exc:
-        raise RetainedEvidenceError("durable shared lock release log is unavailable") from exc
-    finally:
-        if descriptor is not None:
-            os.close(descriptor)
+            raise RetainedEvidenceError(
+                "durable shared lock release line copy is incomplete"
+            )
     digest = hashlib.sha256(raw).hexdigest()
     if digest != reference["line_sha256"]:
         raise RetainedEvidenceError("durable shared lock release line hash differs")
@@ -1697,7 +2314,7 @@ def _read_durable_release_record(
         or json.dumps(dict(record), ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("ascii") + b"\n" != raw
     ):
         raise RetainedEvidenceError("durable shared lock release line is contradictory")
-    return dict(record), digest
+    return dict(record), digest, raw, boundary
 
 
 def _read_hashed_json(
@@ -1761,6 +2378,72 @@ def _read_bytes(relative_path: str, label: str) -> bytes:
         raise
     except OSError as exc:
         raise RetainedEvidenceError("retained %s file is unavailable" % label) from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+def _read_project_source_bytes(relative_path: str, label: str) -> bytes:
+    relative = PurePosixPath(relative_path)
+    if (
+        relative.is_absolute()
+        or ".." in relative.parts
+        or "\\" in relative_path
+        or not relative.parts
+    ):
+        raise RetainedEvidenceError("%s source path is unsafe" % label)
+    try:
+        root = PROJECT_ROOT.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise RetainedEvidenceError("%s source root is unavailable" % label) from exc
+    candidate = root.joinpath(*relative.parts)
+    cursor = root
+    for part in relative.parts:
+        cursor = cursor / part
+        if cursor.is_symlink():
+            raise RetainedEvidenceError("%s source path traverses a symlink" % label)
+    try:
+        resolved = candidate.resolve(strict=True)
+        resolved.relative_to(root)
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise RetainedEvidenceError("%s source path is unavailable" % label) from exc
+    if not resolved.is_file():
+        raise RetainedEvidenceError("%s source path is not a file" % label)
+
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(resolved, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        before = os.fstat(descriptor)
+        current_uid = os.getuid() if hasattr(os, "getuid") else None
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or before.st_nlink != 1
+            or (current_uid is not None and before.st_uid != current_uid)
+            or before.st_size < 1
+            or before.st_size > _MAX_PROFILE_ARTIFACT_BYTES
+        ):
+            raise RetainedEvidenceError("%s source file is invalid" % label)
+        chunks: list[bytes] = []
+        remaining = before.st_size
+        while remaining:
+            chunk = os.read(descriptor, min(65_536, remaining))
+            if not chunk:
+                raise RetainedEvidenceError("%s source file is incomplete" % label)
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        after = os.fstat(descriptor)
+        if (
+            before.st_dev != after.st_dev
+            or before.st_ino != after.st_ino
+            or before.st_size != after.st_size
+            or before.st_mtime_ns != after.st_mtime_ns
+        ):
+            raise RetainedEvidenceError("%s source file changed while being copied" % label)
+        return b"".join(chunks)
+    except RetainedEvidenceError:
+        raise
+    except OSError as exc:
+        raise RetainedEvidenceError("%s source file is unavailable" % label) from exc
     finally:
         if descriptor is not None:
             os.close(descriptor)

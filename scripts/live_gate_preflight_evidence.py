@@ -570,6 +570,25 @@ def _sanitize_lifecycle_result(
         and _SHA256.fullmatch(evidence_sha) is not None
         and _retained_evidence_matches(evidence_path, evidence_sha)
     )
+    expected_validator_inputs_path = (
+        EVIDENCE_ROOT
+        / gate
+        / run_id
+        / "preflight"
+        / "rows"
+        / str(row_run_id)
+        / "retained"
+        / "validator-inputs"
+        / "manifest.json"
+    ).as_posix()
+    validator_inputs_path = result.get("retained_validator_inputs_path")
+    validator_inputs_sha = result.get("retained_validator_inputs_sha256")
+    validator_inputs_valid = (
+        validator_inputs_path == expected_validator_inputs_path
+        and isinstance(validator_inputs_sha, str)
+        and _SHA256.fullmatch(validator_inputs_sha) is not None
+        and _retained_evidence_matches(validator_inputs_path, validator_inputs_sha)
+    )
     exchange = result.get("first_exchange")
     return {
         "fixture_id": result.get("fixture_id")
@@ -598,6 +617,15 @@ def _sanitize_lifecycle_result(
         "retained_evidence_path": evidence_path if evidence_valid else None,
         "retained_evidence_sha256": evidence_sha if evidence_valid else None,
         "retained_evidence_status": "verified" if evidence_valid else "missing_or_invalid",
+        "retained_validator_inputs_path": (
+            validator_inputs_path if validator_inputs_valid else None
+        ),
+        "retained_validator_inputs_sha256": (
+            validator_inputs_sha if validator_inputs_valid else None
+        ),
+        "retained_validator_inputs_status": (
+            "verified" if validator_inputs_valid else "missing_or_invalid"
+        ),
         "checkpoint_sha256": result.get("resume_checkpoint_sha256")
         if isinstance(result.get("resume_checkpoint_sha256"), str)
         and _SHA256.fullmatch(result["resume_checkpoint_sha256"]) is not None
@@ -811,6 +839,9 @@ def _row_is_complete(row: Mapping[str, Any]) -> bool:
                 "retained_evidence_path",
                 "retained_evidence_sha256",
                 "retained_evidence_status",
+                "retained_validator_inputs_path",
+                "retained_validator_inputs_sha256",
+                "retained_validator_inputs_status",
                 "checkpoint_sha256",
             }
             and item.get("fixture_id") in row["fixture_ids"]
@@ -832,6 +863,12 @@ def _row_is_complete(row: Mapping[str, Any]) -> bool:
             and item.get("first_exchange_status") == "completed"
             and item.get("sandbox_cleanup") is True
             and item.get("retained_evidence_status") == "verified"
+            and item.get("retained_validator_inputs_status") == "verified"
+            and isinstance(item.get("retained_validator_inputs_path"), str)
+            and isinstance(item.get("retained_validator_inputs_sha256"), str)
+            and _SHA256.fullmatch(
+                item["retained_validator_inputs_sha256"]
+            ) is not None
             and isinstance(item.get("worker_teardown"), Mapping)
             and set(item["worker_teardown"])
             == {

@@ -1195,6 +1195,13 @@ class TestPreflightEvidence(unittest.TestCase):
             ),
             "retained_evidence_sha256": "f" * 64,
             "retained_evidence_status": "verified",
+            "retained_validator_inputs_path": (
+                "tmp/router-rollout/live-gate-preflight/run/preflight/"
+                "rows/pf-run-E01-%s/retained/validator-inputs/manifest.json"
+                % lifecycle
+            ),
+            "retained_validator_inputs_sha256": "e" * 64,
+            "retained_validator_inputs_status": "verified",
             "checkpoint_sha256": checkpoint_sha256,
         }
 

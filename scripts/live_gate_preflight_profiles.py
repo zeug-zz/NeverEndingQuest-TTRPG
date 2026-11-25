@@ -789,6 +789,8 @@ def _validate_profile_checkpoint_evidence(
     lifecycle: str,
     row_metadata: Mapping[str, Mapping[str, Any]],
     source_sha: str,
+    validator_input_snapshots: Mapping[tuple[str, str], bytes] | None = None,
+    captured_validator_inputs: dict[tuple[str, str], bytes] | None = None,
 ) -> None:
     """Validate a checkpoint descriptor and its retained row-bound attestation."""
     descriptor = evidence.get("resume_checkpoint")
@@ -923,15 +925,25 @@ def _validate_profile_checkpoint_evidence(
     ):
         raise ProfileValidationError("profile evidence checkpoint path is invalid")
 
-    try:
-        attestation_file = _safe_source_path(
-            project_root, attestation_path, "checkpoint attestation"
-        )
-        attestation_bytes = _read_bounded_evidence(attestation_file)
-    except ProfileValidationError as exc:
-        raise ProfileValidationError(
-            "profile evidence checkpoint attestation is unavailable"
-        ) from exc
+    input_key = ("checkpoint_attestation", attestation_path)
+    if validator_input_snapshots is not None:
+        attestation_bytes = validator_input_snapshots.get(input_key)
+        if not isinstance(attestation_bytes, bytes):
+            raise ProfileValidationError(
+                "profile evidence checkpoint attestation copy is missing"
+            )
+    else:
+        try:
+            attestation_file = _safe_source_path(
+                project_root, attestation_path, "checkpoint attestation"
+            )
+            attestation_bytes = _read_bounded_evidence(attestation_file)
+        except ProfileValidationError as exc:
+            raise ProfileValidationError(
+                "profile evidence checkpoint attestation is unavailable"
+            ) from exc
+    if captured_validator_inputs is not None:
+        captured_validator_inputs[input_key] = attestation_bytes
     if hashlib.sha256(attestation_bytes).hexdigest() != attestation_record["sha256"]:
         raise ProfileValidationError("profile evidence checkpoint attestation hash differs")
     try:
@@ -1034,6 +1046,8 @@ def _validate_profile_evidence(
     call_sites: list[Any],
     evidence_directory: Path | None = None,
     trusted_summary_source: tuple[str, bytes] | None = None,
+    validator_input_snapshots: Mapping[tuple[str, str], bytes] | None = None,
+    captured_validator_inputs: dict[tuple[str, str], bytes] | None = None,
 ) -> None:
     """Verify a measured declaration against its retained, bounded call log."""
     path = _safe_source_path(project_root, evidence_path, "profile evidence")
@@ -1170,6 +1184,8 @@ def _validate_profile_evidence(
             lifecycle=lifecycle,
             row_metadata=row_metadata,
             source_sha=source_sha,
+            validator_input_snapshots=validator_input_snapshots,
+            captured_validator_inputs=captured_validator_inputs,
         )
     historic_identity_unavailable = "invocation_identity" not in evidence
     if "adv_summary_child" not in evidence and not historic_identity_unavailable:
@@ -1594,16 +1610,41 @@ def _validate_profile_evidence(
             or call.get("pythonpath") != pythonpath
         ):
             raise ProfileValidationError("profile evidence contains an invalid router call")
-        source_path = _safe_source_path(project_root, source_file, "recorded router call source")
+        input_key = ("call_source", source_file)
+        if validator_input_snapshots is not None:
+            source_bytes = validator_input_snapshots.get(input_key)
+            if not isinstance(source_bytes, bytes):
+                raise ProfileValidationError(
+                    "recorded router call source copy is missing"
+                )
+        else:
+            source_path = _safe_source_path(
+                project_root, source_file, "recorded router call source"
+            )
+            try:
+                source_bytes = source_path.read_bytes()
+            except OSError as exc:
+                raise ProfileValidationError(
+                    "recorded router call source cannot be read"
+                ) from exc
         try:
-            source_bytes = source_path.read_bytes()
             line_count = len(source_bytes.decode("utf-8").splitlines())
-        except (OSError, UnicodeError) as exc:
-            raise ProfileValidationError("recorded router call source cannot be read") from exc
+        except UnicodeError as exc:
+            raise ProfileValidationError(
+                "recorded router call source cannot be read"
+            ) from exc
         if source_line > line_count:
             raise ProfileValidationError("recorded router call line is outside source file")
         if hashlib.sha256(source_bytes).hexdigest() != source_file_sha256:
             raise ProfileValidationError("recorded router call source hash differs")
+        if captured_validator_inputs is not None:
+            prior_source = captured_validator_inputs.setdefault(
+                input_key, source_bytes
+            )
+            if prior_source != source_bytes:
+                raise ProfileValidationError(
+                    "recorded router call source copy is inconsistent"
+                )
         evidence_sites[(source_file, source_line, source_file_sha256)] = (
             evidence_sites.get((source_file, source_line, source_file_sha256), 0) + 1
         )

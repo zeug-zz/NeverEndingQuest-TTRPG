@@ -210,6 +210,20 @@ class TestPreflightRowIntegration(unittest.TestCase):
         self._git_common_patch.start()
         self.addCleanup(self._git_common_patch.stop)
 
+    def _start_fresh_preflight_run(self) -> None:
+        global RUN_ID
+        RUN_ID = "rtest-" + uuid.uuid4().hex[:12]
+        self.retained_run_directory = (
+            PROJECT_ROOT
+            / "tmp"
+            / "router-rollout"
+            / "live-gate-preflight"
+            / RUN_ID
+        )
+        self.addCleanup(
+            shutil.rmtree, self.retained_run_directory, ignore_errors=True
+        )
+
     def _fake_git_common_directory(self) -> Path:
         if self.fake_common_directory is None:
             raise AssertionError("synthetic durable lock directory was not prepared")
@@ -1355,8 +1369,8 @@ class TestPreflightRowIntegration(unittest.TestCase):
         descriptor["event_count"] = len(events)
         self._rewrite_profile_evidence(result, evidence)
 
-    @staticmethod
     def _validate_retained_case(
+        self,
         plan: controller.PreflightRowPlan,
         row_run_id: str,
         intended_identity: dict[str, Any],
@@ -1364,21 +1378,53 @@ class TestPreflightRowIntegration(unittest.TestCase):
         comparison_identity: dict[str, Any] | None = None,
         validation_snapshot: retained.RetainedValidationSnapshot | None = None,
     ) -> dict[str, Any]:
+        source_sha = (
+            comparison_identity["application"]["sha"]
+            if comparison_identity is not None
+            else SOURCE_SHA
+        )
+        evidence_directory = (
+            PROJECT_ROOT
+            / "tmp"
+            / "router-rollout"
+            / "live-gate-preflight"
+            / RUN_ID
+            / "preflight"
+            / "rows"
+            / row_run_id
+        )
+        manifest_path = (
+            evidence_directory / "retained" / "validator-inputs" / "manifest.json"
+        )
+        capture_validator_inputs = not manifest_path.exists()
+        if capture_validator_inputs and validation_snapshot is None:
+            validation_snapshot = self._synthetic_validation_snapshot(source_sha)
+        elif not capture_validator_inputs:
+            validation_snapshot = None
+        manifest_relative = (
+            manifest_path.relative_to(PROJECT_ROOT).as_posix()
+            if manifest_path.exists()
+            else None
+        )
+        manifest_sha256 = (
+            hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+            if manifest_path.exists()
+            else None
+        )
         return retained.validate_retained_supervised_evidence(
             result,
             plan=plan,
             fixture_id=plan.fixture_id,
             lifecycle="startup",
             intended_identity=intended_identity,
-            source_sha=(
-                comparison_identity["application"]["sha"]
-                if comparison_identity is not None
-                else SOURCE_SHA
-            ),
+            source_sha=source_sha,
             row_run_id=row_run_id,
             preflight_run_id=RUN_ID,
             comparison_identity=comparison_identity,
             validation_snapshot=validation_snapshot,
+            capture_validator_inputs=capture_validator_inputs,
+            validator_input_bundle_path=manifest_relative,
+            validator_input_bundle_sha256=manifest_sha256,
         )
 
     def _synthetic_validation_snapshot(
@@ -1389,6 +1435,7 @@ class TestPreflightRowIntegration(unittest.TestCase):
         return retained.RetainedValidationSnapshot(
             source_sha=source_sha,
             summary_source_bytes=b"synthetic committed summary source",
+            runner_source_bytes=Path(profile_runner.__file__).read_bytes(),
             git_common_directory=self.fake_common_directory,
         )
 
@@ -1425,6 +1472,10 @@ class TestPreflightRowIntegration(unittest.TestCase):
 
         self.assertEqual(snapshot.source_sha, SOURCE_SHA)
         self.assertEqual(snapshot.summary_source_bytes, summary_source)
+        self.assertEqual(
+            snapshot.runner_source_bytes,
+            Path(profile_runner.__file__).read_bytes(),
+        )
         self.assertEqual(snapshot.git_common_directory, common_directory)
         self.assertEqual(operations, ["summary_source", "git_common_directory"])
         source_lookup.assert_called_once_with(
@@ -1738,6 +1789,12 @@ class TestPreflightRowIntegration(unittest.TestCase):
         ) -> dict[str, Any]:
             self.assertEqual(source_sha, SOURCE_SHA)
             self.assertEqual(preflight_run_id, RUN_ID)
+            self.fake_common_directory = (
+                self.retained_run_directory
+                / "fake-git-common"
+                / invocation.row_run_id
+            )
+            self.fake_common_directory.mkdir(parents=True, exist_ok=True)
             expected_identity = planned_worker_identity(
                 plan,
                 fixture_id=invocation.fixture_id,
@@ -1979,11 +2036,16 @@ class TestPreflightRowIntegration(unittest.TestCase):
                 "reserve_activations": 0,
             }
 
+        def capture_validation_snapshot(source_sha: str) -> retained.RetainedValidationSnapshot:
+            self.assertEqual(source_sha, SOURCE_SHA)
+            return self._synthetic_validation_snapshot(source_sha)
+
         interfaces = PreflightInterfaces(
             prepare_sandbox=prepare,
             supervise_row=supervise_row,
             cleanup_sandbox=cleanup_sandbox,
             safety_counters=counters,
+            capture_retained_validation_snapshot=capture_validation_snapshot,
         )
         return interfaces, validate
 
@@ -2101,6 +2163,130 @@ class TestPreflightRowIntegration(unittest.TestCase):
                     )
                 )
 
+    def test_retained_validator_inputs_are_self_contained_for_offline_revalidation(
+        self,
+    ) -> None:
+        plan, row_run_id, identity, result = self._retained_case()
+        captured = self._validate_retained_case(plan, row_run_id, identity, result)
+        manifest_path = PROJECT_ROOT / captured["retained_validator_inputs_path"]
+        manifest_raw = manifest_path.read_bytes()
+        self.assertEqual(
+            hashlib.sha256(manifest_raw).hexdigest(),
+            captured["retained_validator_inputs_sha256"],
+        )
+        manifest = json.loads(manifest_raw)
+        entries = manifest["inputs"]
+        self.assertTrue(
+            {
+                "runner_source",
+                "call_source",
+                "durable_release_record",
+                "durable_release_boundary",
+            }.issubset({entry["kind"] for entry in entries})
+        )
+        for entry in entries:
+            copied = PROJECT_ROOT / entry["path"]
+            raw = copied.read_bytes()
+            self.assertEqual(len(raw), entry["size_bytes"])
+            self.assertEqual(hashlib.sha256(raw).hexdigest(), entry["sha256"])
+
+        teardown = json.loads(
+            (
+                PROJECT_ROOT
+                / result["evidence"]["teardown_evidence"]["path"]
+            ).read_text(encoding="utf-8")
+        )
+        durable_path = PROJECT_ROOT / teardown["shared_lock"]["durable_record"]["path"]
+        durable_path.write_bytes(b"external durable log changed after capture\n")
+
+        with (
+            mock.patch.object(
+                retained,
+                "_read_project_source_bytes",
+                side_effect=AssertionError("offline validation read project source"),
+            ),
+            mock.patch.object(
+                profile_runner,
+                "_git_source_bytes_at_sha",
+                side_effect=AssertionError("offline validation invoked git show"),
+            ),
+            mock.patch.object(
+                profile_runner,
+                "_git_common_directory",
+                side_effect=AssertionError("offline validation read Git metadata"),
+            ),
+        ):
+            revalidated = self._validate_retained_case(
+                plan, row_run_id, identity, result
+            )
+        self.assertEqual(revalidated["outcome"], "completed")
+        self.assertEqual(
+            revalidated["retained_validator_inputs_sha256"],
+            captured["retained_validator_inputs_sha256"],
+        )
+
+    def test_retained_validator_input_bundle_fails_closed_on_missing_or_tampered_copy(
+        self,
+    ) -> None:
+        for mutation, expected_message in (
+            ("missing", "retained validator input file is unavailable"),
+            ("tampered", "retained validator input hash differs"),
+        ):
+            with self.subTest(mutation=mutation):
+                plan, row_run_id, identity, result = self._retained_case()
+                captured = self._validate_retained_case(
+                    plan, row_run_id, identity, result
+                )
+                manifest = json.loads(
+                    (
+                        PROJECT_ROOT / captured["retained_validator_inputs_path"]
+                    ).read_text(encoding="utf-8")
+                )
+                call_source = next(
+                    entry
+                    for entry in manifest["inputs"]
+                    if entry["kind"] == "call_source"
+                )
+                copied_path = PROJECT_ROOT / call_source["path"]
+                if mutation == "missing":
+                    copied_path.unlink()
+                else:
+                    copied_path.write_bytes(b"tampered validator input")
+                with self.assertRaisesRegex(
+                    retained.RetainedEvidenceError, expected_message
+                ):
+                    self._validate_retained_case(
+                        plan, row_run_id, identity, result
+                    )
+
+    def test_capture_rejects_durable_release_log_that_differs_from_sidecar(self) -> None:
+        plan, row_run_id, identity, result = self._retained_case()
+        sidecar = json.loads(
+            (
+                PROJECT_ROOT
+                / result["evidence"]["teardown_evidence"]["path"]
+            ).read_text(encoding="utf-8")
+        )
+        reference = sidecar["shared_lock"]["durable_record"]
+        log_path = PROJECT_ROOT / reference["path"]
+        log_raw = log_path.read_bytes()
+        start = reference["byte_offset"]
+        end = start + reference["byte_length"]
+        fabricated_line = b" " * (reference["byte_length"] - 1) + b"\n"
+        log_path.write_bytes(log_raw[:start] + fabricated_line + log_raw[end:])
+
+        with self.assertRaisesRegex(
+            retained.RetainedEvidenceError,
+            "durable shared lock release line hash differs",
+        ):
+            self._validate_retained_case(
+                plan,
+                row_run_id,
+                identity,
+                result,
+                validation_snapshot=self._synthetic_validation_snapshot(SOURCE_SHA),
+            )
+
     def test_checkpoint_result_reconciles_late_guarded_child_evidence(self) -> None:
         plan, row_run_id, identity, result = self._retained_case(
             late_guarded_child=True
@@ -2117,6 +2303,7 @@ class TestPreflightRowIntegration(unittest.TestCase):
             row_run_id=row_run_id,
             preflight_run_id=RUN_ID,
             create_resume_checkpoint=True,
+            validation_snapshot=self._synthetic_validation_snapshot(SOURCE_SHA),
         )
 
         self.assertEqual(summary["outcome"], "completed")
@@ -2302,10 +2489,12 @@ class TestPreflightRowIntegration(unittest.TestCase):
         plan, row_run_id, identity, result = self._retained_case()
         journal_descriptor = result["evidence"]["guard_event_journal"]
         journal_path = PROJECT_ROOT / journal_descriptor["path"]
+        self._validate_retained_case(plan, row_run_id, identity, result)
         original_journal = journal_path.read_bytes()
-        source_bytes = b"synthetic committed summary source"
+        original_read_bytes = retained._read_bytes
+        journal_mutated = False
 
-        def append_late_subprocess_events() -> Path:
+        def append_late_subprocess_events() -> None:
             events = [json.loads(line) for line in journal_path.read_bytes().splitlines()]
             parent_attempt = next(
                 event
@@ -2355,27 +2544,43 @@ class TestPreflightRowIntegration(unittest.TestCase):
             )
             with journal_path.open("ab") as journal_file:
                 journal_file.write(appended)
-            return self._fake_git_common_directory()
 
         with (
             mock.patch.object(
-                profile_runner,
-                "_git_source_bytes_at_sha",
-                return_value=source_bytes,
+                retained,
+                "_read_project_source_bytes",
+                side_effect=AssertionError("offline validation read project source"),
             ),
             mock.patch.object(
                 profile_runner,
                 "_git_common_directory",
-                side_effect=append_late_subprocess_events,
+                side_effect=AssertionError("offline validation read Git metadata"),
             ) as git_common_directory,
+            mock.patch.object(
+                profile_runner,
+                "_git_source_bytes_at_sha",
+                side_effect=AssertionError("offline validation invoked git show"),
+            ) as git_source_bytes,
+            mock.patch.object(retained, "_read_bytes") as read_bytes,
         ):
+            def read_with_late_event(path: str, label: str) -> bytes:
+                nonlocal journal_mutated
+                raw = original_read_bytes(path, label)
+                if label == "worker result" and not journal_mutated:
+                    journal_mutated = True
+                    append_late_subprocess_events()
+                return raw
+
+            read_bytes.side_effect = read_with_late_event
             with self.assertRaisesRegex(
                 retained.RetainedEvidenceError,
                 "guard-event journal changed during reconciliation",
             ):
                 self._validate_retained_case(plan, row_run_id, identity, result)
 
-        self.assertEqual(git_common_directory.call_count, 1)
+        self.assertEqual(git_common_directory.call_count, 0)
+        self.assertEqual(git_source_bytes.call_count, 0)
+        self.assertTrue(journal_mutated)
         changed_journal = journal_path.read_bytes()
         self.assertTrue(changed_journal.startswith(original_journal))
         self.assertEqual(len(changed_journal.splitlines()), len(original_journal.splitlines()) + 2)
@@ -3839,6 +4044,7 @@ class TestPreflightRowIntegration(unittest.TestCase):
         for lifecycle in ("startup", "resume"):
             for field in ("command", "working_directory", "pythonpath"):
                 with self.subTest(lifecycle=lifecycle, field=field):
+                    self._start_fresh_preflight_run()
                     profile_map, coverage = _load_profiles(
                         [row["row_id"] for row in rows]
                     )
@@ -3932,6 +4138,7 @@ class TestPreflightRowIntegration(unittest.TestCase):
 
         for lifecycle in ("startup", "resume"):
             with self.subTest(lifecycle=lifecycle):
+                self._start_fresh_preflight_run()
                 profile_map, coverage = _load_profiles(
                     [row["row_id"] for row in rows]
                 )
