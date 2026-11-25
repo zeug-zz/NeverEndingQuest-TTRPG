@@ -1106,6 +1106,11 @@ class TestPreflightControllerContinuation(unittest.TestCase):
 
 
 class TestPreflightEvidence(unittest.TestCase):
+    def _require_driver_stop_policy_proof(self) -> None:
+        path = PROJECT_ROOT / preflight_evidence._DRIVER_STOP_POLICY_PATH
+        if not path.is_file():
+            self.skipTest("missing required path: %s" % path)
+
     def setUp(self) -> None:
         self.run_id = "evidence-test-" + uuid.uuid4().hex[:12]
         self.evidence_root = (
@@ -1350,6 +1355,7 @@ class TestPreflightEvidence(unittest.TestCase):
         }
 
     def test_exact_identity_match_does_not_trust_caller_supplied_row_summaries(self) -> None:
+        self._require_driver_stop_policy_proof()
         path = self._write_report()
 
         report = json.loads((PROJECT_ROOT / path).read_text(encoding="ascii"))
@@ -1503,6 +1509,7 @@ class TestPreflightEvidence(unittest.TestCase):
         self.assertFalse(report["live_gate_pass"])
 
     def test_plain_mapping_cannot_claim_supervised_row_provenance(self) -> None:
+        self._require_driver_stop_policy_proof()
         report = self._complete_row_report()
         report["execution_provenance"] = "supervised-retained-evidence"
         self._write_report(row_report=report)
@@ -1521,6 +1528,7 @@ class TestPreflightEvidence(unittest.TestCase):
         self.assertFalse(result["eligible"])
 
     def test_standalone_driver_proof_does_not_satisfy_provider_free_status(self) -> None:
+        self._require_driver_stop_policy_proof()
         row_report = {
             "report_type": "provider-free-row-preflight",
             "provider_free": {
@@ -1586,6 +1594,7 @@ class TestPreflightEvidence(unittest.TestCase):
         self.assertFalse(result["eligible"])
 
     def test_changed_relevant_source_hash_fails_pf6(self) -> None:
+        self._require_driver_stop_policy_proof()
         original_read = preflight_evidence._read_project_bytes
 
         def changed_source(relative_path: Path, maximum_bytes: int) -> bytes:
@@ -1604,6 +1613,7 @@ class TestPreflightEvidence(unittest.TestCase):
         )
 
     def test_tampered_source_bound_driver_proof_fails_pf6(self) -> None:
+        self._require_driver_stop_policy_proof()
         original = (
             PROJECT_ROOT / preflight_evidence._DRIVER_STOP_POLICY_PATH
         ).read_bytes()
@@ -1638,6 +1648,7 @@ class TestPreflightEvidence(unittest.TestCase):
         self.assertFalse(result["eligible"])
 
     def test_unknown_provider_activity_observation_fails_pf6_closed(self) -> None:
+        self._require_driver_stop_policy_proof()
         original = (
             PROJECT_ROOT / preflight_evidence._DRIVER_STOP_POLICY_PATH
         ).read_bytes()

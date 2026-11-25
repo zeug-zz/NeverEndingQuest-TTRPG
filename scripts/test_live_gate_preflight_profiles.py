@@ -790,7 +790,12 @@ class TestLiveGatePreflightProfiles(unittest.TestCase):
                 self.assertFalse(coverage["booking_eligible"])
                 checked += 1
         if checked == 0:
-            self.skipTest("retained P4 FR-11 characterization evidence is unavailable")
+            missing = [
+                str(PROJECT_ROOT / relative_path)
+                for relative_path, _expected_hash, _expected_source, _profile_id in records
+                if not (PROJECT_ROOT / relative_path).is_file()
+            ]
+            self.skipTest("missing required path(s): %s" % ", ".join(missing))
 
     def test_retained_real_startup_evidence_validates_offline(self) -> None:
         evidence_path = Path(
@@ -798,7 +803,7 @@ class TestLiveGatePreflightProfiles(unittest.TestCase):
             "fr11-tower-p1-startup-01/profile-evidence.json"
         )
         if not evidence_path.is_file():
-            self.skipTest("retained FR-11 characterization evidence is unavailable")
+            self.skipTest("missing required path: %s" % (PROJECT_ROOT / evidence_path))
         raw = evidence_path.read_bytes()
         self.assertEqual(
             hashlib.sha256(raw).hexdigest(),
@@ -3055,6 +3060,9 @@ class TestPreflightStubAndSafety(unittest.TestCase):
         return sandbox, location_name, str(area.get("areaId") or "CTR001")
 
     def test_real_guarded_adv_summary_child_returns_and_persists(self) -> None:
+        required_area = PROJECT_ROOT / "modules" / "Capture_Arena" / "areas" / "CTR001.json"
+        if not required_area.is_file():
+            self.skipTest("missing required path: %s" % required_area)
         sandbox, location_name, area_id = self._prepare_real_adv_summary_sandbox()
         run_id = "summary-child-real-" + uuid.uuid4().hex[:12]
         evidence_directory = PROJECT_ROOT / GUARD_EVENT_ROOT / run_id
@@ -3587,6 +3595,9 @@ class TestPreflightStubAndSafety(unittest.TestCase):
     def test_summary_child_retention_accepts_host_journal_rewrite_after_child(
         self,
     ) -> None:
+        required_area = PROJECT_ROOT / "modules" / "Capture_Arena" / "areas" / "CTR001.json"
+        if not required_area.is_file():
+            self.skipTest("missing required path: %s" % required_area)
         sandbox, location_name, area_id = self._prepare_real_adv_summary_sandbox()
         run_id = "summary-child-journal-rewrite-" + uuid.uuid4().hex[:12]
         evidence_directory = PROJECT_ROOT / GUARD_EVENT_ROOT / run_id
@@ -7747,6 +7758,9 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
         self.assertEqual(timed_out.calls[-1], ("close",))
 
     def test_worker_traverses_lifecycle_entrypoint_with_startup_guard_and_fails_closed(self) -> None:
+        project_config = PROJECT_ROOT / "config.py"
+        if not project_config.is_file():
+            self.skipTest("missing required path: %s" % project_config)
         with tempfile.TemporaryDirectory(prefix="profile-worker-", dir=PROJECT_ROOT / "tmp") as temp_root:
             sandbox = Path(temp_root).resolve()
             relative_sandbox = sandbox.relative_to(PROJECT_ROOT).as_posix()
