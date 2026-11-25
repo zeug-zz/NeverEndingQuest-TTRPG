@@ -316,9 +316,11 @@ _DIAGNOSTIC_REASON_CODES = frozenset(
         "usage_telemetry_truncated",
         "usage_telemetry_unavailable",
         "validation_failed",
+        "websocket_client_unavailable",
         "worktree_dirty",
         "unclassified_reason",
         "workspace_identity_unavailable",
+        "public_socket_unavailable",
     }
 )
 _SAFE_ROW_GATE_ERROR_REASONS = _DIAGNOSTIC_REASON_CODES
@@ -781,9 +783,20 @@ class PublicHttpResponse:
 class PublicClientError(RuntimeError):
     """Safe, bounded failure from the public player HTTP/Socket.IO client."""
 
-    def __init__(self, reason: str = "public_client_unavailable") -> None:
+    def __init__(
+        self,
+        reason: str = "public_client_unavailable",
+        *,
+        original_exception_class: object = None,
+    ) -> None:
         super().__init__(reason)
         self.reason = reason
+        self._original_exception_class = (
+            original_exception_class
+            if type(original_exception_class) is str
+            and original_exception_class in _DIAGNOSTIC_EXCEPTION_CLASS_LABELS
+            else None
+        )
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -1145,6 +1158,7 @@ class PublicUrlClient:
                 payloads.append(payload)
                 received.set()
 
+        original_exception_class: str | None = None
         try:
             client.on("player.snapshot", on_snapshot, namespace=PLAYER_NAMESPACE)
             client.connect(
@@ -1189,9 +1203,14 @@ class PublicUrlClient:
         except PublicClientError:
             _disconnect_socket_quietly(client)
             raise
-        except Exception:
+        except Exception as exc:
             _disconnect_socket_quietly(client)
-            raise PublicClientError("public_socket_unavailable") from None
+            original_exception_class = _diagnostic_exception_class(exc)
+        if original_exception_class is not None:
+            raise PublicClientError(
+                "public_socket_unavailable",
+                original_exception_class=original_exception_class,
+            ) from None
 
     def probe_host_socket_namespace(self) -> bool:
         """Return true only when the public server explicitly refuses `/`."""
@@ -1282,6 +1301,21 @@ class PublicUrlClient:
         )
 
 
+def websocket_client_transport_available() -> bool:
+    """Check the websocket import used by python-engineio's sync client."""
+    try:
+        client = PublicUrlClient._new_socket_client()
+        connect_websocket = client.eio._connect_websocket
+        method = getattr(connect_websocket, "__func__", connect_websocket)
+        method_globals = getattr(method, "__globals__", None)
+    except Exception:
+        return False
+    return (
+        isinstance(method_globals, dict)
+        and method_globals.get("websocket") is not None
+    )
+
+
 @dataclass(frozen=True, slots=True, repr=False)
 class ProcessRecord:
     pid: int
@@ -1317,6 +1351,9 @@ _DIAGNOSTIC_EXCEPTION_CLASSES = (
     (AssertionError, "AssertionError"),
     (KeyboardInterrupt, "KeyboardInterrupt"),
 )
+_DIAGNOSTIC_EXCEPTION_CLASS_LABELS = frozenset(
+    label for _known_type, label in _DIAGNOSTIC_EXCEPTION_CLASSES
+) | {"OtherException"}
 _DIAGNOSTIC_RECORD_KEYS = frozenset(
     {
         "category",
@@ -1346,6 +1383,13 @@ def _diagnostic_exception_class(exception: BaseException | None) -> str:
     if exception is None:
         return "none"
     exception_type = type(exception)
+    if exception_type is PublicClientError:
+        original_exception_class = exception._original_exception_class
+        if (
+            type(original_exception_class) is str
+            and original_exception_class in _DIAGNOSTIC_EXCEPTION_CLASS_LABELS
+        ):
+            return original_exception_class
     for known_type, label in _DIAGNOSTIC_EXCEPTION_CLASSES:
         if exception_type is known_type:
             return label
@@ -5568,7 +5612,6 @@ def _is_observed_public_contract_failure(reason: str) -> bool:
         "public_response_too_large",
         "public_login_response_invalid",
         "public_session_cookie_invalid",
-        "public_socket_unavailable",
         "public_socket_input_invalid",
         "public_socket_snapshot_invalid",
         "public_socket_snapshot_timeout",
@@ -6196,6 +6239,9 @@ class LiveGateDependencies:
     startup_input_validator: Callable[
         [Path], tuple[dict[str, bool], _UsageSnapshot]
     ] = _validate_capture_startup_inputs
+    websocket_transport_available: Callable[[], bool] = (
+        websocket_client_transport_available
+    )
 
 
 def _default_dependencies(root: Path) -> LiveGateDependencies:
@@ -7733,6 +7779,15 @@ class LiveGateRunner:
             return self._result_without_evidence()
 
     def _validate_before_side_effects(self) -> None:
+        try:
+            websocket_available = (
+                self.dependencies.websocket_transport_available()
+            )
+        except Exception:
+            websocket_available = False
+        if websocket_available is not True:
+            raise GateError("websocket_client_unavailable")
+
         identity, platform_key = check_workspace_identity(
             self.dependencies, self.arguments
         )
@@ -9436,6 +9491,10 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="operation", required=True)
     subparsers.add_parser("plan", help="print the frozen manifest without side effects")
+    subparsers.add_parser(
+        "precheck-websocket",
+        help="check the synchronous python-engineio websocket transport without side effects",
+    )
     run = subparsers.add_parser("run", help="run the authorized N3 live lifecycle gate")
     run.add_argument("--run-id", required=True)
     run.add_argument("--sha", required=True)
@@ -9470,6 +9529,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.operation == "plan":
         print(json.dumps(_plan_document(), ensure_ascii=True, sort_keys=True))
         return 0
+    if args.operation == "precheck-websocket":
+        available = websocket_client_transport_available()
+        print(
+            json.dumps(
+                {
+                    "available": available,
+                    "check": "python-engineio-sync-client-websocket",
+                    "dependency": "websocket-client",
+                    "side_effects": False,
+                },
+                ensure_ascii=True,
+                sort_keys=True,
+            )
+        )
+        return 0 if available else 2
     run_arguments = RunArguments(
         run_id=args.run_id,
         sha=args.sha,
