@@ -1,0 +1,6622 @@
+# SPDX-FileCopyrightText: 2024 MoonlightByte
+# SPDX-License-Identifier: Fair-Source-1.0
+# License: See LICENSE file in the repository root.
+# This software is subject to the terms of the Fair Source License.
+
+"""Primary-operated, bounded characterization of startup and resume paths.
+
+This runner consumes an already prepared ``tmp/combat_capture`` copy. Launch it
+with the dedicated preflight guard directory first on ``PYTHONPATH``, followed
+by the repository root, and use the repository venv. It never seeds fixtures
+or changes the checked-in profile declaration. Each invocation measures one
+fixture-party pair and one lifecycle, retaining separate evidence.
+"""
+
+from __future__ import annotations
+
+import argparse
+import ast
+import base64
+import errno
+import hashlib
+import ipaddress
+import importlib.abc
+import importlib.machinery
+import json
+import os
+import re
+import signal
+import socket
+import stat
+import subprocess
+import sys
+import time
+import uuid
+from collections.abc import Callable, Mapping, Sequence
+from datetime import datetime, timedelta, timezone
+from pathlib import Path, PurePosixPath
+from typing import Any
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROFILE_EVIDENCE_ROOT = Path(
+    "tmp/router-rollout/live-gate-preflight/profile-characterization"
+)
+ROW_PREFLIGHT_EVIDENCE_ROOT = Path("tmp/router-rollout/live-gate-preflight")
+SANDBOX_RELATIVE = Path("tmp/combat_capture")
+AUTHORIZATION_RULING_ID = "neq-w1-fr11-profiles-characterization-20261112"
+HOST_PORT = 8360
+PLAYER_PORT = 8370
+REQUIRED_PORTS = (HOST_PORT, PLAYER_PORT)
+NETSTAT_EXECUTABLE = "/usr/sbin/netstat"
+LSOF_EXECUTABLE = "/usr/sbin/lsof"
+STARTUP_TIMEOUT_SECONDS = 60.0
+STOP_TIMEOUT_SECONDS = 12.0
+OBSERVER_TIMEOUT_SECONDS = 3.0
+TEARDOWN_PORT_WAIT_TIMEOUT_NS = 75_000_000_000
+TEARDOWN_PORT_WAIT_POLL_INTERVAL_NS = 1_000_000_000
+MAX_OBSERVER_OUTPUT_BYTES = 32768
+MAX_NETSTAT_OUTPUT_BYTES = 8_000_000
+MAX_NETSTAT_ROWS = 100_000
+MAX_CHARACTERIZATION_ATTEMPTS = 16
+LIVE_WINDOW_HOURS = 0.5
+MAX_LIVE_WINDOW_HOURS = 8
+LIVE_WINDOW_HOLDER = "N agent-run"
+LIVE_WINDOW_BOOKING_ROLE = "N"
+PROFILE_CHARACTERIZATION_FROZEN_CAPS = {
+    "max_characterization_attempts": MAX_CHARACTERIZATION_ATTEMPTS,
+    "max_attempts_per_profile_lifecycle": 1,
+    "provider_requests": 0,
+    "live_attempt_allowance": 0,
+    "startup_timeout_seconds": STARTUP_TIMEOUT_SECONDS,
+    "stop_timeout_seconds": STOP_TIMEOUT_SECONDS,
+    "observer_timeout_seconds": OBSERVER_TIMEOUT_SECONDS,
+    "window_hours": LIVE_WINDOW_HOURS,
+}
+_FIXTURE_IDS = (
+    "interior_tavern",
+    "landscape_village",
+    "transition_tower_approach",
+    "combat_stage_tavern_zones",
+)
+_CHECKPOINT_TRAVEL_STEPS = {
+    "interior_tavern": ("E4-07", 5),
+    "landscape_village": ("E3-01", 10),
+    "transition_tower_approach": ("E3-03", 10),
+}
+_SAFE_RUN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+_SHA1_OR_SHA256 = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
+_SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_NETSTAT_OWNER_PATTERN = re.compile(
+    rb":(?P<pid>[0-9]+)\s+(?P<field1>[0-9a-f]{5})\s+"
+    rb"(?P<field2>[0-9a-f]{8})\s+(?P<field3>[0-9a-f]{16})"
+    rb"(?:\s+[0-9a-f]{1,16})*\s*\Z",
+    re.IGNORECASE,
+)
+_NETSTAT_OWNER_PID_CANDIDATE_PATTERN = re.compile(rb":(?P<pid>[0-9]+)(?=\s|$)")
+_BOOKING_ID = re.compile(
+    r"^live-gate-preflight-[NS]-[0-9]{8}T[0-9]{6}Z$"
+)
+_KNOWN_PROVIDER_KEYS = (
+    "OPENAI_API_KEY",
+    "OPENROUTER_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "GOOGLE_API_KEY",
+    "GEMINI_API_KEY",
+    "MISTRAL_API_KEY",
+    "COHERE_API_KEY",
+)
+_SECRET_ENV_NAME = re.compile(
+    r"(?:API[_-]?KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL|AUTH)", re.IGNORECASE
+)
+_PROXY_ENV_NAME = re.compile(r"(?:^|_)PROXY$", re.IGNORECASE)
+_SOURCE_BOUND_FILES = (
+    "scripts/live_gate_preflight_profile_runner.py",
+    "scripts/live_gate_preflight_comparison_identity.py",
+    "scripts/live_gate_preflight_sandbox.py",
+    "scripts/live_gate_preflight_profiles.py",
+    "scripts/live_gate_preflight_profiles.json",
+    "scripts/live_gate_preflight_profiles.schema.json",
+    "scripts/live_gate_preflight_safety.py",
+    "scripts/live_gate_preflight_stub.py",
+    "scripts/sitecustomize.py",
+    "scripts/live_gate_preflight_guard/sitecustomize.py",
+    "core/ai/adv_summary.py",
+)
+
+
+class CharacterizationError(RuntimeError):
+    """Raised when a run cannot safely produce a measured profile."""
+
+    def __init__(self, code: str) -> None:
+        self.code = code
+        super().__init__(code)
+
+
+def _format_utc_timestamp(value: datetime) -> str:
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise CharacterizationError("live_window_timestamp_invalid")
+    return value.astimezone(timezone.utc).replace(microsecond=0).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+
+
+def _parse_utc_timestamp(value: Any) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=timezone.utc
+        )
+    except ValueError:
+        return None
+    if parsed.strftime("%Y-%m-%dT%H:%M:%SZ") != value:
+        return None
+    return parsed
+
+
+def _build_live_window_lock_record(
+    *,
+    run_id: str,
+    fixture_id: str,
+    party_size: int,
+    lifecycle: str,
+    planned_row_id: str,
+    source_sha: str,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    instant = now or datetime.now(timezone.utc)
+    if instant.tzinfo is None or instant.utcoffset() is None:
+        raise CharacterizationError("live_window_timestamp_invalid")
+    start = instant.astimezone(timezone.utc).replace(microsecond=0)
+    end = start + timedelta(hours=LIVE_WINDOW_HOURS)
+    booking_timestamp = start.strftime("%Y%m%dT%H%M%SZ")
+    return {
+        "schema_version": 1,
+        "holder": LIVE_WINDOW_HOLDER,
+        "gate": "live-gate-preflight",
+        "run_id": run_id,
+        "booking_id": "live-gate-preflight-%s-%s"
+        % (LIVE_WINDOW_BOOKING_ROLE, booking_timestamp),
+        "authorizing_ruling": AUTHORIZATION_RULING_ID,
+        "window_start": _format_utc_timestamp(start),
+        "window_end": _format_utc_timestamp(end),
+        "frozen_caps": dict(PROFILE_CHARACTERIZATION_FROZEN_CAPS),
+        "ports": list(REQUIRED_PORTS),
+        "fixture_id": fixture_id,
+        "party_size": party_size,
+        "lifecycle": lifecycle,
+        "planned_row_id": planned_row_id,
+        "source_sha": source_sha,
+    }
+
+
+def _matches_frozen_caps(value: Any) -> bool:
+    expected = PROFILE_CHARACTERIZATION_FROZEN_CAPS
+    if not isinstance(value, Mapping) or set(value) != set(expected):
+        return False
+    return all(
+        type(value[key]) is type(expected_value)
+        and value[key] == expected_value
+        for key, expected_value in expected.items()
+    )
+
+
+def _valid_live_window_lock_record(value: Any, *, now: datetime | None = None) -> bool:
+    required_fields = {
+        "schema_version",
+        "holder",
+        "gate",
+        "run_id",
+        "booking_id",
+        "authorizing_ruling",
+        "window_start",
+        "window_end",
+        "frozen_caps",
+        "ports",
+        "fixture_id",
+        "party_size",
+        "lifecycle",
+        "planned_row_id",
+        "source_sha",
+    }
+    if not isinstance(value, Mapping) or set(value) != required_fields:
+        return False
+    start = _parse_utc_timestamp(value.get("window_start"))
+    end = _parse_utc_timestamp(value.get("window_end"))
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None or current.utcoffset() is None:
+        return False
+    if (
+        type(value.get("schema_version")) is not int
+        or value.get("schema_version") != 1
+        or value.get("holder") != LIVE_WINDOW_HOLDER
+        or value.get("gate") != "live-gate-preflight"
+        or not isinstance(value.get("run_id"), str)
+        or _SAFE_RUN_ID.fullmatch(str(value.get("run_id"))) is None
+        or not isinstance(value.get("booking_id"), str)
+        or _BOOKING_ID.fullmatch(str(value.get("booking_id"))) is None
+        or not isinstance(value.get("authorizing_ruling"), str)
+        or value.get("authorizing_ruling") != AUTHORIZATION_RULING_ID
+        or not _matches_frozen_caps(value.get("frozen_caps"))
+        or value.get("ports") != list(REQUIRED_PORTS)
+        or value.get("fixture_id") not in _FIXTURE_IDS
+        or type(value.get("party_size")) is not int
+        or value.get("party_size") not in (1, 4)
+        or value.get("lifecycle") not in ("startup", "resume")
+        or not isinstance(value.get("planned_row_id"), str)
+        or _SAFE_RUN_ID.fullmatch(str(value.get("planned_row_id"))) is None
+        or not isinstance(value.get("source_sha"), str)
+        or _SHA1_OR_SHA256.fullmatch(str(value.get("source_sha"))) is None
+        or start is None
+        or end is None
+    ):
+        return False
+    expected_booking_id = "live-gate-preflight-%s-%s" % (
+        LIVE_WINDOW_BOOKING_ROLE,
+        start.strftime("%Y%m%dT%H%M%SZ"),
+    )
+    duration = (end - start).total_seconds()
+    current_utc = current.astimezone(timezone.utc)
+    return bool(
+        value.get("booking_id") == expected_booking_id
+        and 0 < duration <= MAX_LIVE_WINDOW_HOURS * 60 * 60
+        and duration <= LIVE_WINDOW_HOURS * 60 * 60
+        and start <= current_utc < end
+    )
+
+
+def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Measure one real mapping-pilot startup or resume path using the "
+            "fail-closed preflight stub. Requires a prepared tmp/combat_capture."
+        )
+    )
+    parser.add_argument("--fixture-id", choices=_FIXTURE_IDS)
+    parser.add_argument("--party-size", type=int, choices=(1, 4))
+    parser.add_argument("--lifecycle", choices=("startup", "resume"))
+    parser.add_argument("--source-sha")
+    parser.add_argument("--run-id")
+    parser.add_argument("--resume-checkpoint-sha256")
+    parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--create-resume-checkpoint", action="store_true", help=argparse.SUPPRESS
+    )
+    parser.add_argument("--planned-row-id", help=argparse.SUPPRESS)
+    parser.add_argument("--arm", choices=("A", "B", "D"), help=argparse.SUPPRESS)
+    parser.add_argument("--lifecycle-id", help=argparse.SUPPRESS)
+    parser.add_argument("--preflight-run-id", help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--comparison-identity-json",
+        type=_parse_comparison_identity_json,
+        help=argparse.SUPPRESS,
+    )
+    if argv is None and len(sys.argv) > 1 and sys.argv[1] == "--worker":
+        args = parser.parse_args(sys.argv[1:])
+    else:
+        args = parser.parse_args(argv)
+    if args.comparison_identity_json is not None:
+        try:
+            from scripts.live_gate_preflight_comparison_identity import (
+                validate_comparison_identity,
+            )
+
+            args.comparison_identity_json = validate_comparison_identity(
+                args.comparison_identity_json,
+                expected_application_sha=args.source_sha,
+            )
+        except (ImportError, ValueError) as exc:
+            parser.error("comparison-only source identity is invalid: %s" % exc)
+    if args.worker:
+        required = (
+            args.fixture_id,
+            args.party_size,
+            args.lifecycle,
+            args.source_sha,
+            args.run_id,
+            args.planned_row_id,
+            args.arm,
+            args.lifecycle_id,
+        )
+        if any(value is None for value in required):
+            parser.error("internal worker identity is incomplete")
+        if args.preflight_run_id is not None and (
+            not isinstance(args.preflight_run_id, str)
+            or _SAFE_RUN_ID.fullmatch(args.preflight_run_id) is None
+        ):
+            parser.error("internal row-preflight identity is invalid")
+        if args.create_resume_checkpoint and (
+            args.lifecycle != "startup"
+            or args.resume_checkpoint_sha256 is not None
+            or args.fixture_id not in _CHECKPOINT_TRAVEL_STEPS
+        ):
+            parser.error("internal checkpoint preparation identity is invalid")
+        return args
+    if (
+        args.preflight_run_id is not None
+        or args.create_resume_checkpoint
+    ):
+        parser.error("internal worker options are not valid for a controller invocation")
+    if any(
+        value is None
+        for value in (args.fixture_id, args.party_size, args.lifecycle, args.source_sha)
+    ):
+        parser.error(
+            "--fixture-id, --party-size, --lifecycle, and --source-sha are required"
+        )
+    if args.lifecycle == "resume":
+        if not isinstance(args.resume_checkpoint_sha256, str) or not _SHA256.fullmatch(
+            args.resume_checkpoint_sha256
+        ):
+            parser.error("--resume requires --resume-checkpoint-sha256 with a SHA-256")
+    elif args.resume_checkpoint_sha256 is not None:
+        parser.error("--resume-checkpoint-sha256 is only valid for --lifecycle resume")
+    return args
+
+
+def _parse_comparison_identity_json(value: str) -> Mapping[str, Any]:
+    try:
+        identity = json.loads(value)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise argparse.ArgumentTypeError(
+            "comparison-only identity must be JSON"
+        ) from exc
+    if not isinstance(identity, Mapping):
+        raise argparse.ArgumentTypeError(
+            "comparison-only identity must be an object"
+        )
+    return identity
+
+
+def _require_safe_project_root() -> Path:
+    try:
+        root = PROJECT_ROOT.resolve(strict=True)
+        current = Path.cwd().resolve(strict=True)
+        tmp_root = root / "tmp"
+        current.relative_to(tmp_root.resolve(strict=True))
+    except (OSError, RuntimeError) as exc:
+        raise CharacterizationError("isolated_controller_root_unavailable") from exc
+    except ValueError as exc:
+        raise CharacterizationError("controller_must_start_in_project_tmp") from exc
+    if (
+        current in (tmp_root.resolve(strict=True), root)
+        or root.is_symlink()
+        or tmp_root.is_symlink()
+    ):
+        raise CharacterizationError("controller_must_start_in_isolated_tmp_directory")
+    return root
+
+
+def _require_safe_worker_root() -> Path:
+    try:
+        root = PROJECT_ROOT.resolve(strict=True)
+        sandbox = (root / SANDBOX_RELATIVE).resolve(strict=True)
+        current = Path.cwd().resolve(strict=True)
+        sandbox.relative_to((root / "tmp").resolve(strict=True))
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise CharacterizationError("sandbox_worker_root_unavailable") from exc
+    if (
+        current != sandbox
+        or (root / "tmp").is_symlink()
+        or (root / SANDBOX_RELATIVE).is_symlink()
+    ):
+        raise CharacterizationError("worker_must_start_in_isolated_sandbox")
+    return root
+
+
+def _require_parent_startup_guard() -> None:
+    _require_process_startup_guard(
+        PROJECT_ROOT / "scripts" / "live_gate_preflight_guard" / "sitecustomize.py",
+        expected_role="parent",
+        failure_code="parent_startup_guard_inactive",
+    )
+
+
+def _validate_startup_canary_record(
+    report: Any,
+    *,
+    process_role: str,
+    command: Sequence[str],
+    cwd: str | Path,
+    environment_sha256: str,
+    expected_pid: int | None = None,
+) -> dict[str, Any]:
+    """Require complete startup evidence before accepting a process launch."""
+    if not isinstance(report, Mapping):
+        raise CharacterizationError("startup_canary_report_invalid")
+    selected_command = list(command)
+    expected_command_sha256 = hashlib.sha256(
+        json.dumps(selected_command, ensure_ascii=True, separators=(",", ":")).encode(
+            "ascii"
+        )
+    ).hexdigest()
+    pid = report.get("pid")
+    startup_observed_at_ns = report.get("startup_observed_at_ns")
+    interpreter = report.get("interpreter")
+    if (
+        report.get("process_role") != process_role
+        or type(pid) is not int
+        or pid <= 0
+        or (expected_pid is not None and pid != expected_pid)
+        or type(startup_observed_at_ns) is not int
+        or startup_observed_at_ns <= 0
+        or report.get("command") != selected_command
+        or report.get("command_sha256") != expected_command_sha256
+        or report.get("environment_sha256") != environment_sha256
+        or report.get("working_directory") != str(Path(cwd))
+        or report.get("guard_active") is not True
+        or report.get("non_loopback_connect_denied") is not True
+        or report.get("subprocess_launch_denied") is not True
+        or not isinstance(interpreter, Mapping)
+        or interpreter.get("executable") != str(PROJECT_ROOT / ".venv" / "bin" / "python")
+        or interpreter.get("prefix") != str(PROJECT_ROOT / ".venv")
+        or not isinstance(interpreter.get("base_prefix"), str)
+        or interpreter.get("prefix") == interpreter.get("base_prefix")
+    ):
+        raise CharacterizationError("startup_canary_report_invalid")
+    return dict(report)
+
+
+def _require_worker_startup_guard() -> None:
+    _require_process_startup_guard(
+        PROJECT_ROOT / "scripts" / "live_gate_preflight_guard" / "sitecustomize.py",
+        expected_role="host",
+        failure_code="host_startup_guard_inactive",
+    )
+
+
+def _require_process_startup_guard(
+    expected_sitecustomize: Path, *, expected_role: str, failure_code: str
+) -> None:
+    """Check startup-installed safety without importing project application code."""
+    from scripts.live_gate_preflight_safety import (
+        CANARY_REPORT_ENV,
+        PROCESS_ROLE_ENV,
+        current_invocation_command,
+        require_startup_guard_active,
+    )
+
+    if (
+        os.environ.get("NEQ_PREFLIGHT_STARTUP_GUARD_REQUIRED") != "1"
+        or os.environ.get("NEQ_PREFLIGHT_NETWORK_GUARD") != "1"
+        or os.environ.get("NEQ_PREFLIGHT_STARTUP_GUARD_ACTIVE") != "1"
+        or os.environ.get("NEQ_PREFLIGHT_NETWORK_GUARD_ACTIVE") != "1"
+        or os.environ.get("NEQ_PREFLIGHT_ENV_SANITIZED") != "1"
+        or os.environ.get("NEQ_PREFLIGHT_CONNECT_CANARY_DENIED") != "1"
+        or os.environ.get("NEQ_PREFLIGHT_SUBPROCESS_CANARY_DENIED") != "1"
+    ):
+        raise CharacterizationError(failure_code)
+    try:
+        require_startup_guard_active()
+    except Exception as exc:
+        raise CharacterizationError(failure_code) from exc
+    startup_module = sys.modules.get("sitecustomize")
+    startup_path = getattr(startup_module, "__file__", None)
+    guard_module = sys.modules.get("scripts.live_gate_preflight_safety")
+    try:
+        observed_sitecustomize = Path(startup_path).resolve(strict=True)
+        expected_path = expected_sitecustomize.resolve(strict=True)
+        observed_guard = Path(getattr(guard_module, "__file__", None)).resolve(strict=True)
+        expected_guard = PROJECT_ROOT / "scripts" / "live_gate_preflight_safety.py"
+        expected_site_bytes = expected_path.read_bytes()
+        expected_guard_bytes = expected_guard.read_bytes()
+        observed_site_bytes = observed_sitecustomize.read_bytes()
+        observed_guard_bytes = observed_guard.read_bytes()
+    except (OSError, RuntimeError, TypeError) as exc:
+        raise CharacterizationError(failure_code) from exc
+    if (
+        observed_sitecustomize != expected_path
+        or observed_site_bytes != expected_site_bytes
+        or observed_guard != expected_guard
+        or observed_guard_bytes != expected_guard_bytes
+        or not getattr(guard_module, "_GUARD_INSTALLED", False)
+        or not getattr(guard_module, "_SUBPROCESS_GUARD_INSTALLED", False)
+        or getattr(guard_module, "subprocess").Popen
+        is not getattr(guard_module, "_GuardedPopen")
+    ):
+        raise CharacterizationError(failure_code)
+    expected_pythonpath = os.pathsep.join(
+        (
+            str(PROJECT_ROOT / "scripts" / "live_gate_preflight_guard"),
+            str(PROJECT_ROOT),
+        )
+    )
+    if os.environ.get("PYTHONPATH") != expected_pythonpath:
+        raise CharacterizationError("pythonpath_identity_invalid")
+    _require_repository_venv()
+    try:
+        canary_report = json.loads(os.environ.get(CANARY_REPORT_ENV, ""))
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise CharacterizationError("startup_canary_report_invalid") from exc
+    actual_command = current_invocation_command()
+    command_sha256 = hashlib.sha256(
+        json.dumps(actual_command, ensure_ascii=True, separators=(",", ":")).encode("ascii")
+    ).hexdigest()
+    if (
+        not isinstance(canary_report, Mapping)
+        or os.environ.get(PROCESS_ROLE_ENV) != expected_role
+        or canary_report.get("process_role") != expected_role
+        or type(canary_report.get("pid")) is not int
+        or canary_report.get("pid") != os.getpid()
+        or type(canary_report.get("startup_observed_at_ns")) is not int
+        or canary_report.get("startup_observed_at_ns") <= 0
+        or canary_report.get("command") != actual_command
+        or canary_report.get("command_sha256") != command_sha256
+        or canary_report.get("guard_active") is not True
+        or canary_report.get("non_loopback_connect_denied") is not True
+        or canary_report.get("subprocess_launch_denied") is not True
+        or canary_report.get("interpreter") != _interpreter_identity()
+        or not isinstance(canary_report.get("command_sha256"), str)
+        or _SHA256.fullmatch(str(canary_report.get("environment_sha256", ""))) is None
+        or canary_report.get("working_directory") != str(Path.cwd())
+    ):
+        raise CharacterizationError("startup_canary_report_invalid")
+    if "config" in sys.modules:
+        raise CharacterizationError("configuration_loaded_before_characterization")
+    if any(os.environ.get(name, "") for name in _KNOWN_PROVIDER_KEYS):
+        raise CharacterizationError("provider_keys_not_blank")
+    for name, value in os.environ.items():
+        if (_SECRET_ENV_NAME.search(name) or _PROXY_ENV_NAME.search(name)) and value:
+            raise CharacterizationError("preflight_environment_not_sanitized")
+
+
+def _require_repository_venv() -> None:
+    """Require the exact venv invocation and its project-owned sys.prefix."""
+    expected_python = str(PROJECT_ROOT / ".venv" / "bin" / "python")
+    expected_prefix = str(PROJECT_ROOT / ".venv")
+    if (
+        sys.executable != expected_python
+        or sys.prefix != expected_prefix
+        or sys.prefix == sys.base_prefix
+    ):
+        raise CharacterizationError("runner_must_use_repository_venv")
+
+
+def _interpreter_identity() -> dict[str, str]:
+    return {
+        "executable": sys.executable,
+        "prefix": sys.prefix,
+        "base_prefix": sys.base_prefix,
+    }
+
+
+class _SandboxConfigOriginGuard(importlib.abc.MetaPathFinder):
+    """Refuse imports of config.py unless resolution points inside the sandbox."""
+
+    def __init__(self, sandbox: Path) -> None:
+        self.sandbox_config = sandbox / "config.py"
+
+    def find_spec(
+        self,
+        fullname: str,
+        path: Sequence[str] | None = None,
+        target: Any = None,
+    ) -> Any:
+        del target
+        if fullname != "config":
+            return None
+        spec = importlib.machinery.PathFinder.find_spec(fullname, path)
+        origin = getattr(spec, "origin", None)
+        try:
+            resolved_origin = Path(origin).resolve(strict=True)
+            expected = self.sandbox_config.resolve(strict=True)
+        except (OSError, RuntimeError, TypeError) as exc:
+            raise ImportError("sandbox config origin is unavailable") from exc
+        if resolved_origin != expected:
+            raise ImportError("real project config.py is forbidden in preflight")
+        return spec
+
+
+def _install_sandbox_config_guard(sandbox: Path) -> _SandboxConfigOriginGuard:
+    existing = sys.modules.get("config")
+    if existing is not None:
+        origin = getattr(existing, "__file__", None)
+        try:
+            if Path(origin).resolve(strict=True) != (sandbox / "config.py").resolve(strict=True):
+                raise CharacterizationError("real_project_config_was_already_loaded")
+        except (OSError, RuntimeError, TypeError) as exc:
+            raise CharacterizationError("sandbox_config_origin_unavailable") from exc
+    guard = _SandboxConfigOriginGuard(sandbox)
+    sys.meta_path.insert(0, guard)
+    return guard
+
+
+def _remove_import_guard(guard: _SandboxConfigOriginGuard | None) -> None:
+    if guard is None:
+        return
+    try:
+        sys.meta_path.remove(guard)
+    except ValueError:
+        return
+
+
+def _configure_sandbox_import_paths(root: Path, sandbox: Path) -> None:
+    """Bind the host tooling package to root while keeping sandbox imports first."""
+    root_text = str(root)
+    sandbox_text = str(sandbox)
+    if "scripts" not in sys.modules:
+        sys.path.insert(0, root_text)
+        try:
+            package = importlib.import_module("scripts")
+        finally:
+            try:
+                sys.path.remove(root_text)
+            except ValueError:
+                pass
+    else:
+        package = sys.modules["scripts"]
+    package_path = getattr(package, "__file__", None)
+    try:
+        expected_package_directory = (root / "scripts").resolve(strict=True)
+        if package_path is not None:
+            expected_package = (expected_package_directory / "__init__.py").resolve(strict=True)
+            if Path(package_path).resolve(strict=True) != expected_package:
+                raise CharacterizationError("project_scripts_package_source_mismatch")
+        else:
+            locations = getattr(package, "__path__", ())
+            resolved_locations = {
+                Path(location).resolve(strict=True) for location in locations
+            }
+            if expected_package_directory not in resolved_locations:
+                raise CharacterizationError("project_scripts_package_source_mismatch")
+            package.__path__ = [str(expected_package_directory)]
+            package_spec = getattr(package, "__spec__", None)
+            if package_spec is not None:
+                package_spec.submodule_search_locations = package.__path__
+    except (OSError, RuntimeError, TypeError) as exc:
+        raise CharacterizationError("project_scripts_package_unavailable") from exc
+
+    filtered: list[str] = []
+    for entry in sys.path:
+        try:
+            resolved = Path(entry or Path.cwd()).resolve(strict=False)
+        except (OSError, RuntimeError):
+            filtered.append(entry)
+            continue
+        if resolved not in (root, sandbox):
+            filtered.append(entry)
+    sys.path[:] = filtered
+    sys.path.insert(0, sandbox_text)
+    sys.path.insert(1, root_text)
+
+
+def _git_output(arguments: Sequence[str], *, timeout: float = 10.0) -> str:
+    from scripts.live_gate_preflight_safety import run_guarded_subprocess
+
+    try:
+        completed = run_guarded_subprocess(
+            ["git", *arguments],
+            cwd=PROJECT_ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise CharacterizationError("git_identity_unavailable") from exc
+    if completed.returncode != 0:
+        raise CharacterizationError("git_identity_unavailable")
+    return completed.stdout.strip()
+
+
+def _git_source_bytes_at_sha(source_sha: str, relative_path: str) -> bytes:
+    """Read one allowlisted source file from the exact declared Git commit."""
+    if (
+        not isinstance(source_sha, str)
+        or _SHA1_OR_SHA256.fullmatch(source_sha) is None
+        or relative_path not in _SOURCE_BOUND_FILES
+    ):
+        raise CharacterizationError("source_file_identity_unavailable")
+    from scripts.live_gate_preflight_safety import run_guarded_subprocess
+
+    try:
+        completed = run_guarded_subprocess(
+            ["git", "show", "%s:%s" % (source_sha, relative_path)],
+            cwd=PROJECT_ROOT,
+            check=False,
+            capture_output=True,
+            timeout=10.0,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise CharacterizationError("source_file_identity_unavailable") from exc
+    if completed.returncode != 0 or not isinstance(completed.stdout, bytes):
+        raise CharacterizationError("source_file_identity_unavailable")
+    return completed.stdout
+
+
+def _verify_source_identity(source_sha: str) -> None:
+    if not isinstance(source_sha, str) or _SHA1_OR_SHA256.fullmatch(source_sha) is None:
+        raise CharacterizationError("source_sha_invalid")
+    observed = _git_output(("rev-parse", "HEAD"))
+    if observed != source_sha:
+        raise CharacterizationError("source_sha_differs_from_head")
+    try:
+        from scripts.live_gate_preflight_safety import run_guarded_subprocess
+
+        completed = run_guarded_subprocess(
+            ["git", "diff", "--quiet", "HEAD", "--"],
+            cwd=PROJECT_ROOT,
+            check=False,
+            timeout=10.0,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise CharacterizationError("source_tree_identity_unavailable") from exc
+    if completed.returncode != 0:
+        raise CharacterizationError("tracked_source_tree_is_dirty")
+    for relative in _SOURCE_BOUND_FILES:
+        path = PROJECT_ROOT / relative
+        try:
+            current_bytes = path.read_bytes()
+            committed = run_guarded_subprocess(
+                ["git", "show", "%s:%s" % (source_sha, relative)],
+                cwd=PROJECT_ROOT,
+                check=False,
+                capture_output=True,
+                timeout=10.0,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise CharacterizationError("source_file_identity_unavailable") from exc
+        if committed.returncode != 0 or committed.stdout != current_bytes:
+            raise CharacterizationError("source_file_differs_from_declared_sha")
+    _require_repository_venv()
+
+
+def _verify_bound_source_identity(
+    source_sha: str, comparison_identity: Mapping[str, Any] | None
+) -> None:
+    """Verify the normal same-SHA identity or an explicit comparison-only split."""
+    if comparison_identity is None:
+        _verify_source_identity(source_sha)
+        return
+    from scripts.live_gate_preflight_comparison_identity import (
+        ComparisonIdentityError,
+        validate_comparison_identity,
+        verify_application_worktree,
+        verify_tool_tree,
+    )
+
+    try:
+        identity = validate_comparison_identity(
+            comparison_identity, expected_application_sha=source_sha
+        )
+        tool = identity["tool"]
+        _verify_source_identity(tool["sha"])
+        verify_tool_tree(tool["sha"], tool["tree"], project_root=PROJECT_ROOT)
+        verify_application_worktree(identity)
+    except ComparisonIdentityError as exc:
+        raise CharacterizationError(exc.args[0]) from exc
+
+
+def _safe_project_file(relative: str | Path, label: str) -> Path:
+    raw = PurePosixPath(str(relative))
+    if (
+        raw.is_absolute()
+        or ".." in raw.parts
+        or "\\" in str(relative)
+        or not raw.parts
+    ):
+        raise CharacterizationError(label + "_path_invalid")
+    candidate = PROJECT_ROOT.joinpath(*raw.parts)
+    cursor = PROJECT_ROOT
+    for part in raw.parts:
+        cursor = cursor / part
+        if cursor.is_symlink():
+            raise CharacterizationError(label + "_path_invalid")
+    try:
+        resolved = candidate.resolve(strict=True)
+        resolved.relative_to(PROJECT_ROOT)
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise CharacterizationError(label + "_path_unavailable") from exc
+    if not resolved.is_file():
+        raise CharacterizationError(label + "_path_unavailable")
+    return resolved
+
+
+def _read_json(path: Path, label: str) -> Any:
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(path, os.O_RDONLY | nofollow)
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > 2_000_000:
+            raise CharacterizationError(label + "_invalid")
+        raw = os.read(descriptor, 2_000_001)
+        if len(raw) > 2_000_000:
+            raise CharacterizationError(label + "_invalid")
+        return json.loads(
+            raw.decode("utf-8"),
+            object_pairs_hook=_unique_object,
+            parse_constant=_reject_json_constant,
+        )
+    except CharacterizationError:
+        raise
+    except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
+        raise CharacterizationError(label + "_invalid") from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate_json_key")
+        result[key] = value
+    return result
+
+
+def _reject_json_constant(value: str) -> Any:
+    raise ValueError("non_standard_json_value:" + value)
+
+
+def _frozen_location_name_matches_utterance(name: str, utterance: str) -> bool:
+    """Match a frozen destination's full name or an unambiguous two-word alias."""
+    normalized_name = " ".join(name.casefold().split())
+    normalized_utterance = utterance.casefold()
+    if normalized_name and normalized_name in normalized_utterance:
+        return True
+    words = normalized_name.split()
+    return any(
+        " ".join(words[index : index + 2]) in normalized_utterance
+        for index in range(len(words) - 1)
+    )
+
+
+def _checkpoint_runtime_location_id(source_location_id: Any) -> str | None:
+    """Resolve a frozen source location through the canonical runtime ID map."""
+    from scripts.mapping_pilot.fixtures import LOCATION_ID_MAP
+
+    if not isinstance(source_location_id, str) or not source_location_id.strip():
+        return None
+    runtime_location_id = LOCATION_ID_MAP.get(source_location_id)
+    if not isinstance(runtime_location_id, str) or not runtime_location_id.strip():
+        return None
+    return runtime_location_id
+
+
+def _validate_checkpoint_seed_location(
+    current_location_id: Any, travel_turn: Mapping[str, Any]
+) -> str:
+    """Require the seeded tracker to use the mapped runtime, not source, ID."""
+    source_location_id = travel_turn.get("source_location_id")
+    source_runtime_location_id = _checkpoint_runtime_location_id(
+        source_location_id
+    )
+    if (
+        source_runtime_location_id is None
+        or travel_turn.get("source_runtime_location_id")
+        != source_runtime_location_id
+        or current_location_id != source_runtime_location_id
+    ):
+        raise CharacterizationError("checkpoint_seed_location_mismatch")
+    return source_runtime_location_id
+
+
+def _resolve_checkpoint_travel_turn(
+    *,
+    script: Mapping[str, Any],
+    fixture_id: str,
+    party_size: int,
+    members: Sequence[str],
+    source_location_id: str,
+) -> dict[str, Any] | None:
+    """Resolve only the authorized frozen travel step and its open-exit target."""
+    selected = _CHECKPOINT_TRAVEL_STEPS.get(fixture_id)
+    if selected is None:
+        return None
+    step_id, time_minutes = selected
+    fixture_ids = script.get("fixture_ids")
+    turns = script.get("turns")
+    if (
+        not isinstance(fixture_ids, list)
+        or fixture_id not in fixture_ids
+        or not isinstance(turns, list)
+    ):
+        raise CharacterizationError("checkpoint_travel_script_identity_invalid")
+    matches = [
+        turn
+        for turn in turns
+        if isinstance(turn, Mapping) and turn.get("id") == step_id
+    ]
+    if len(matches) != 1:
+        raise CharacterizationError("checkpoint_travel_step_missing_or_duplicated")
+    turn = matches[0]
+    actor = turn.get("actor")
+    character = actor.get("party_%d" % party_size) if isinstance(actor, Mapping) else None
+    utterance = turn.get("utterance")
+    if (
+        not isinstance(utterance, str)
+        or not utterance.strip()
+        or not isinstance(character, str)
+        or character not in members
+        or type(time_minutes) is not int
+        or time_minutes < 1
+    ):
+        raise CharacterizationError("checkpoint_travel_turn_invalid")
+
+    try:
+        from scripts.mapping_pilot.fixtures import load_verified_fixtures
+
+        fixtures, _fixture_hashes = load_verified_fixtures()
+    except Exception as exc:
+        raise CharacterizationError("checkpoint_travel_fixtures_unavailable") from exc
+    source_fixture = fixtures.get(fixture_id)
+    source_ids = source_fixture.get("location_ids") if isinstance(source_fixture, Mapping) else None
+    source_locations = source_fixture.get("locations") if isinstance(source_fixture, Mapping) else None
+    if (
+        not isinstance(source_ids, list)
+        or source_ids != [source_location_id]
+        or not isinstance(source_locations, list)
+    ):
+        raise CharacterizationError("checkpoint_travel_source_fixture_mismatch")
+    source_matches = [
+        location
+        for location in source_locations
+        if isinstance(location, Mapping)
+        and location.get("location_id") == source_location_id
+    ]
+    if len(source_matches) != 1:
+        raise CharacterizationError("checkpoint_travel_source_location_invalid")
+    source_runtime_id = _checkpoint_runtime_location_id(source_location_id)
+    if source_runtime_id is None:
+        raise CharacterizationError("checkpoint_travel_source_location_invalid")
+
+    exits = source_matches[0].get("exits")
+    known_destinations = {
+        exit_row.get("known_destination_location_id")
+        for exit_row in exits or []
+        if isinstance(exit_row, Mapping)
+        and exit_row.get("state") == "open"
+        and exit_row.get("destination_knowledge") == "known"
+        and isinstance(exit_row.get("known_destination_location_id"), str)
+    }
+    matching_targets: list[tuple[str, Mapping[str, Any]]] = []
+    for destination in known_destinations:
+        locations = [
+            location
+            for fixture in fixtures.values()
+            if isinstance(fixture, Mapping)
+            for location in fixture.get("locations", [])
+            if isinstance(location, Mapping)
+            and location.get("location_id") == destination
+        ]
+        if (
+            len(locations) == 1
+            and isinstance(locations[0].get("name"), str)
+            and _frozen_location_name_matches_utterance(
+                locations[0]["name"], utterance
+            )
+        ):
+            matching_targets.append((destination, locations[0]))
+    if len(matching_targets) != 1:
+        raise CharacterizationError("checkpoint_travel_open_exit_target_ambiguous")
+    target_source_id, target_location = matching_targets[0]
+    if target_source_id == source_location_id:
+        raise CharacterizationError("checkpoint_travel_target_unchanged")
+    target_name = target_location.get("name")
+    target_runtime_id = _checkpoint_runtime_location_id(target_source_id)
+    if (
+        not isinstance(target_name, str)
+        or not target_name.strip()
+        or not _frozen_location_name_matches_utterance(target_name, utterance)
+        or not isinstance(target_runtime_id, str)
+        or not target_runtime_id.strip()
+    ):
+        raise CharacterizationError("checkpoint_travel_target_not_scripted")
+    return {
+        "step_id": step_id,
+        "utterance": utterance,
+        "character": character,
+        "source_location_id": source_location_id,
+        "source_runtime_location_id": source_runtime_id,
+        "target_source_location_id": target_source_id,
+        "target_location_id": target_runtime_id,
+        "target_location_name": target_name,
+        "time_minutes": time_minutes,
+    }
+
+
+def _load_worker_checkpoint_travel_turn(
+    args: argparse.Namespace, sandbox: Path
+) -> dict[str, Any] | None:
+    """Re-resolve the travel response from the worker's own frozen row inputs."""
+    metadata = _read_json(
+        sandbox / "mapping_pilot" / "seed_metadata.json",
+        "checkpoint_travel_seed_metadata",
+    )
+    counterbalance = metadata.get("counterbalance") if isinstance(metadata, Mapping) else None
+    mapping = metadata.get("mapping") if isinstance(metadata, Mapping) else None
+    party = metadata.get("party") if isinstance(metadata, Mapping) else None
+    if (
+        not isinstance(metadata, Mapping)
+        or metadata.get("fixture_id") != args.fixture_id
+        or metadata.get("arm") != args.arm
+        or not isinstance(counterbalance, Mapping)
+        or counterbalance.get("row_id") != args.planned_row_id
+        or counterbalance.get("row_type") != "planned"
+        or not isinstance(mapping, Mapping)
+        or not isinstance(party, Mapping)
+        or party.get("size") != args.party_size
+        or not isinstance(party.get("members"), list)
+        or len(party.get("members", [])) != args.party_size
+        or any(
+            not isinstance(member, str) or not member.strip()
+            for member in party.get("members", [])
+        )
+        or len(set(party.get("members", []))) != len(party.get("members", []))
+        or not isinstance(mapping.get("source_location_id"), str)
+        or mapping.get("runtime_location_id")
+        != _checkpoint_runtime_location_id(mapping.get("source_location_id"))
+        or not isinstance(counterbalance.get("script"), str)
+        or type(metadata.get("effective_seed")) is not int
+        or counterbalance.get("fixed_seed") != metadata.get("effective_seed")
+    ):
+        raise CharacterizationError("checkpoint_travel_worker_identity_mismatch")
+    frozen_path = _safe_project_file(
+        "plans/v2-mapping-pilot-prereg/counterbalance.json",
+        "checkpoint_travel_counterbalance",
+    )
+    frozen = _read_json(frozen_path, "checkpoint_travel_counterbalance")
+    frozen_rows = frozen.get("rows") if isinstance(frozen, Mapping) else None
+    frozen_matches = [
+        row
+        for row in frozen_rows or []
+        if isinstance(row, Mapping) and row.get("row_id") == args.planned_row_id
+    ]
+    if (
+        len(frozen_matches) != 1
+        or frozen_matches[0].get("row_type") != "planned"
+        or frozen_matches[0].get("arm") != args.arm
+        or frozen_matches[0].get("party") != args.party_size
+        or frozen_matches[0].get("fixed_seed") != metadata["effective_seed"]
+        or frozen_matches[0].get("script") != counterbalance.get("script")
+    ):
+        raise CharacterizationError("checkpoint_travel_worker_row_mismatch")
+    script_path = _safe_project_file(
+        Path("plans/v2-mapping-pilot-prereg") / counterbalance["script"],
+        "checkpoint_travel_script",
+    )
+    script = _read_json(script_path, "checkpoint_travel_script")
+    if not isinstance(script, Mapping):
+        raise CharacterizationError("checkpoint_travel_script_invalid")
+    return _resolve_checkpoint_travel_turn(
+        script=script,
+        fixture_id=args.fixture_id,
+        party_size=args.party_size,
+        members=party["members"],
+        source_location_id=mapping["source_location_id"],
+    )
+
+
+def _checkpoint_travel_response(turn: Mapping[str, Any]) -> str:
+    """Build the bounded action bundle consumed by the ordinary host route."""
+    return json.dumps(
+        {
+            "narration": "The party follows the open route and reaches "
+            + str(turn["target_location_name"])
+            + ".",
+            "actions": [
+                {
+                    "action": "transitionLocation",
+                    "parameters": {"newLocation": turn["target_location_id"]},
+                },
+                {
+                    "action": "updateTime",
+                    "parameters": {"timeEstimate": str(turn["time_minutes"])},
+                },
+            ],
+        },
+        ensure_ascii=True,
+        separators=(",", ":"),
+    )
+
+
+def _checkpoint_travel_response_resolver(
+    turn: Mapping[str, Any],
+) -> Any:
+    """Route gameplay, transition approval, and transition narration separately."""
+    from scripts.live_gate_preflight_stub import RouterStubError
+
+    gameplay_response = _checkpoint_travel_response(turn)
+    transition_approval = json.dumps(
+        {
+            "approved": True,
+            "stop_location": None,
+            "stop_location_name": None,
+            "reason": "Frozen preflight travel step follows an authored open exit.",
+            "narrative_guidance": "",
+            "requires_encounter": False,
+            "plot_guidance": None,
+        },
+        ensure_ascii=True,
+        separators=(",", ":"),
+    )
+    transition_narration = (
+        "The party follows the open route and reaches "
+        + str(turn["target_location_name"])
+        + "."
+    )
+
+    return _CheckpointTravelResponseResolver(
+        turn=turn,
+        gameplay_response=gameplay_response,
+        transition_approval=transition_approval,
+        transition_narration=transition_narration,
+    )
+
+
+def _validate_checkpoint_travel_exchange(
+    result: Mapping[str, Any],
+    *,
+    travel_turn: Mapping[str, Any],
+    driver_exchange: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """Require one completed driver turn and the ordered host travel call path."""
+    expected_proof = {
+        "step_id": travel_turn.get("step_id"),
+        "source_location_id": travel_turn.get("source_location_id"),
+        "source_runtime_location_id": travel_turn.get(
+            "source_runtime_location_id"
+        ),
+        "target_source_location_id": travel_turn.get("target_source_location_id"),
+        "target_location_id": travel_turn.get("target_location_id"),
+        "response_counts": {
+            "travel_action_responses": 1,
+            "gameplay_validation_responses": 1,
+            "transition_validation_responses": 1,
+            "transition_narration_responses": 1,
+        },
+        "complete": True,
+    }
+    if (
+        _checkpoint_runtime_location_id(travel_turn.get("source_location_id"))
+        != travel_turn.get("source_runtime_location_id")
+        or _checkpoint_runtime_location_id(
+            travel_turn.get("target_source_location_id")
+        )
+        != travel_turn.get("target_location_id")
+    ):
+        raise CharacterizationError("checkpoint_travel_proof_mismatch")
+    proof = result.get("checkpoint_travel")
+    calls = result.get("calls")
+    call_count = result.get("call_count")
+    if (
+        result.get("outcome") != "completed"
+        or result.get("failure_code") is not None
+        or result.get("stub_failure_code") is not None
+        or not isinstance(proof, Mapping)
+        or not isinstance(calls, list)
+        or any(not isinstance(call, Mapping) for call in calls)
+        or type(call_count) is not int
+        or call_count != len(calls)
+    ):
+        raise CharacterizationError("checkpoint_travel_proof_missing")
+    call_pairs = [
+        (call.get("task"), call.get("source_file"))
+        for call in calls
+        if isinstance(call, Mapping)
+    ]
+    call_sequences = [call.get("sequence") for call in calls]
+    if any(type(sequence) is not int for sequence in call_sequences) or (
+        call_sequences != list(range(1, len(calls) + 1))
+    ):
+        raise CharacterizationError("checkpoint_travel_call_path_mismatch")
+
+    expected_path = (
+        ("dm_main", "main.py"),
+        ("dm_main", "core/ai/transition_validator.py"),
+        ("dm_validation", "main.py"),
+        ("dm_main", "core/ai/action_handler.py"),
+    )
+    path_keys = (
+        "travel_action",
+        "transition_validation",
+        "gameplay_validation",
+        "transition_narration",
+    )
+    # The host performs one startup dm_main/main.py response before the
+    # scripted travel turn. Only that one call site repeats; the
+    # transition_validator, gameplay-validation, and action_handler call
+    # sites each occur exactly once, during the scripted travel turn.
+    expected_site_counts = (2, 1, 1, 1)
+    observed_site_sequences: list[list[int]] = []
+    for pair, expected_count in zip(expected_path, expected_site_counts):
+        matches = [
+            index + 1
+            for index, observed in enumerate(call_pairs)
+            if observed == pair
+        ]
+        if len(matches) != expected_count:
+            raise CharacterizationError("checkpoint_travel_call_path_mismatch")
+
+        observed_site_sequences.append(matches)
+
+    response_call_sequences = proof.get("response_call_sequences")
+    if (
+        not isinstance(response_call_sequences, Mapping)
+        or set(response_call_sequences) != set(path_keys)
+        or any(
+            type(response_call_sequences.get(key)) is not int
+            or response_call_sequences.get(key) < 1
+            for key in path_keys
+        )
+    ):
+        raise CharacterizationError("checkpoint_travel_call_path_mismatch")
+
+    observed_response_positions = [
+        observed_sequences[-1] for observed_sequences in observed_site_sequences
+    ]
+    if not (
+        observed_site_sequences[0][0] < observed_response_positions[0]
+    ):
+        raise CharacterizationError("checkpoint_travel_call_order_mismatch")
+    if observed_response_positions != sorted(observed_response_positions) or (
+        observed_response_positions
+        != list(
+            range(
+                observed_response_positions[0],
+                observed_response_positions[0] + len(expected_path),
+            )
+        )
+    ):
+        raise CharacterizationError("checkpoint_travel_call_order_mismatch")
+    if [
+        response_call_sequences[key] for key in path_keys
+    ] != observed_response_positions:
+        raise CharacterizationError("checkpoint_travel_call_path_mismatch")
+    expected_proof["response_call_sequences"] = dict(response_call_sequences)
+    if dict(proof) != expected_proof:
+        raise CharacterizationError("checkpoint_travel_proof_mismatch")
+    if (
+        not isinstance(driver_exchange, Mapping)
+        or driver_exchange.get("status") != "completed"
+        or driver_exchange.get("step_id") != expected_proof["step_id"]
+        or driver_exchange.get("active_character_set") is not True
+        or driver_exchange.get("turn_completed") is not True
+        or driver_exchange.get("turn_timed_out") is not False
+        or type(driver_exchange.get("game_output_count")) is not int
+        or driver_exchange.get("game_output_count", 0) < 1
+    ):
+        raise CharacterizationError("checkpoint_travel_driver_exchange_invalid")
+    return dict(proof)
+
+
+class _CheckpointTravelResponseResolver:
+    """Return the canned response only along the expected host transition path."""
+
+    def __init__(
+        self,
+        *,
+        turn: Mapping[str, Any],
+        gameplay_response: str,
+        transition_approval: str,
+        transition_narration: str,
+    ) -> None:
+        self.turn = dict(turn)
+        self.gameplay_response = gameplay_response
+        self.transition_approval = transition_approval
+        self.transition_narration = transition_narration
+        self.travel_action_responses = 0
+        self.gameplay_validation_responses = 0
+        self.transition_validation_responses = 0
+        self.transition_narration_responses = 0
+        self.call_sequence = 0
+        self.response_call_sequences: dict[str, int | None] = {
+            "travel_action": None,
+            "transition_validation": None,
+            "gameplay_validation": None,
+            "transition_narration": None,
+        }
+
+    def __call__(
+        self,
+        task: str,
+        source_file: str | None,
+        _args: Sequence[Any],
+        kwargs: Mapping[str, Any],
+    ) -> Any:
+        from scripts.live_gate_preflight_stub import RouterStubError
+
+        self.call_sequence += 1
+        call_sequence = self.call_sequence
+        if task == "dm_main" and source_file == "main.py":
+            messages = kwargs.get("messages")
+            utterance = self.turn.get("utterance")
+            last_user_content = None
+            if isinstance(messages, Sequence) and not isinstance(messages, (str, bytes)):
+                for message in reversed(messages):
+                    if (
+                        isinstance(message, Mapping)
+                        and message.get("role") == "user"
+                        and isinstance(message.get("content"), str)
+                    ):
+                        last_user_content = message["content"]
+                        break
+            if (
+                isinstance(utterance, str)
+                and isinstance(last_user_content, str)
+                and utterance in last_user_content
+            ):
+                if self.travel_action_responses != 0:
+                    raise RouterStubError("scripted travel response was already consumed")
+                self.response_call_sequences["travel_action"] = call_sequence
+                self.travel_action_responses += 1
+                return self.gameplay_response
+            return None
+
+        if task == "dm_validation" and source_file == "main.py":
+            messages = kwargs.get("messages")
+            last_assistant_content = None
+            if isinstance(messages, Sequence) and not isinstance(messages, (str, bytes)):
+                for message in reversed(messages):
+                    if (
+                        isinstance(message, Mapping)
+                        and message.get("role") == "assistant"
+                        and isinstance(message.get("content"), str)
+                    ):
+                        last_assistant_content = message["content"]
+                        break
+            try:
+                parsed = json.loads(last_assistant_content or "")
+            except (TypeError, json.JSONDecodeError):
+                parsed = None
+            expected_actions = json.loads(self.gameplay_response).get("actions")
+            if (
+                not isinstance(parsed, Mapping)
+                or parsed.get("actions") != expected_actions
+            ):
+                return None
+            if (
+                self.travel_action_responses != 1
+                or self.transition_validation_responses != 1
+                or self.gameplay_validation_responses != 0
+            ):
+                raise RouterStubError("gameplay validation call is out of sequence")
+            self.response_call_sequences["gameplay_validation"] = call_sequence
+            self.gameplay_validation_responses += 1
+            return json.dumps(
+                {
+                    "valid": True,
+                    "reason": "Frozen preflight travel action matches the scripted open route.",
+                },
+                ensure_ascii=True,
+                separators=(",", ":"),
+            )
+
+        if task == "dm_main" and source_file == "core/ai/transition_validator.py":
+            messages = kwargs.get("messages")
+            user_contents = [
+                message.get("content")
+                for message in messages
+                if isinstance(message, Mapping)
+                and message.get("role") == "user"
+                and isinstance(message.get("content"), str)
+            ] if isinstance(messages, Sequence) and not isinstance(messages, (str, bytes)) else []
+            utterance = self.turn.get("utterance")
+            target_location_id = self.turn.get("target_location_id")
+            if (
+                self.gameplay_validation_responses != 0
+                or self.travel_action_responses != 1
+                or self.transition_validation_responses != 0
+                or not isinstance(utterance, str)
+                or not isinstance(target_location_id, str)
+                or not any(
+                    utterance in content and target_location_id in content
+                    for content in user_contents
+                )
+            ):
+                raise RouterStubError("transition validation call is out of sequence")
+            self.response_call_sequences["transition_validation"] = call_sequence
+            self.transition_validation_responses += 1
+            return self.transition_approval
+
+        if task == "dm_main" and source_file == "core/ai/action_handler.py":
+            if (
+                self.transition_validation_responses != 1
+                or self.gameplay_validation_responses != 1
+                or self.transition_narration_responses != 0
+            ):
+                raise RouterStubError("transition narration call is out of sequence")
+            self.response_call_sequences["transition_narration"] = call_sequence
+            self.transition_narration_responses += 1
+            return self.transition_narration
+        return None
+
+    def proof(self) -> dict[str, Any]:
+        counts = {
+            "travel_action_responses": self.travel_action_responses,
+            "gameplay_validation_responses": self.gameplay_validation_responses,
+            "transition_validation_responses": self.transition_validation_responses,
+            "transition_narration_responses": self.transition_narration_responses,
+        }
+        return {
+            "step_id": self.turn.get("step_id"),
+            "source_location_id": self.turn.get("source_location_id"),
+            "source_runtime_location_id": self.turn.get(
+                "source_runtime_location_id"
+            ),
+            "target_source_location_id": self.turn.get("target_source_location_id"),
+            "target_location_id": self.turn.get("target_location_id"),
+            "response_counts": counts,
+            "response_call_sequences": dict(self.response_call_sequences),
+            "complete": all(value == 1 for value in counts.values()),
+        }
+
+
+def _retain_moved_resume_checkpoint(
+    *,
+    sandbox: Path,
+    fixture_id: str,
+    party_size: int,
+    planned_row_id: str,
+    arm: str,
+    source_sha: str,
+    run_id: str,
+    travel_turn: Mapping[str, Any],
+    travel_proof: Mapping[str, Any],
+    initial_state_sha256: str,
+    initial_time: str,
+    project_root: Path = PROJECT_ROOT,
+) -> tuple[dict[str, Any], dict[str, str]]:
+    """Copy and attest persisted canonical state after the guarded host stops."""
+    import shutil
+
+    from scripts import live_gate_preflight_sandbox as sandbox_tools
+    from scripts.mapping_pilot import launcher
+
+    source_runtime_location_id = _checkpoint_runtime_location_id(
+        travel_turn.get("source_location_id")
+    )
+    target_runtime_location_id = _checkpoint_runtime_location_id(
+        travel_turn.get("target_source_location_id")
+    )
+    root = project_root.resolve(strict=True)
+    expected_sandbox = root / SANDBOX_RELATIVE
+    if (
+        root != PROJECT_ROOT.resolve(strict=True)
+        or sandbox.resolve(strict=True) != expected_sandbox.resolve(strict=True)
+        or sandbox.is_symlink()
+        or fixture_id not in _CHECKPOINT_TRAVEL_STEPS
+        or type(party_size) is not int
+        or party_size not in (1, 4)
+        or not isinstance(planned_row_id, str)
+        or _SAFE_RUN_ID.fullmatch(planned_row_id) is None
+        or arm not in ("A", "B", "D")
+        or not isinstance(source_sha, str)
+        or _SHA1_OR_SHA256.fullmatch(source_sha) is None
+        or not isinstance(run_id, str)
+        or _SAFE_RUN_ID.fullmatch(run_id) is None
+        or not isinstance(initial_state_sha256, str)
+        or _SHA256.fullmatch(initial_state_sha256) is None
+        or not isinstance(initial_time, str)
+        or not isinstance(travel_proof, Mapping)
+        or travel_proof.get("complete") is not True
+        or travel_proof.get("response_counts")
+        != {
+            "travel_action_responses": 1,
+            "gameplay_validation_responses": 1,
+            "transition_validation_responses": 1,
+            "transition_narration_responses": 1,
+        }
+        or travel_proof.get("step_id") != travel_turn.get("step_id")
+        or travel_proof.get("source_location_id")
+        != travel_turn.get("source_location_id")
+        or travel_proof.get("source_runtime_location_id")
+        != travel_turn.get("source_runtime_location_id")
+        or travel_proof.get("target_source_location_id")
+        != travel_turn.get("target_source_location_id")
+        or travel_proof.get("target_location_id")
+        != travel_turn.get("target_location_id")
+        or source_runtime_location_id is None
+        or travel_turn.get("source_runtime_location_id")
+        != source_runtime_location_id
+        or target_runtime_location_id is None
+        or travel_turn.get("target_location_id") != target_runtime_location_id
+    ):
+        raise CharacterizationError("checkpoint_creation_identity_invalid")
+
+    _validate_supervised_planned_row(
+        fixture_id=fixture_id,
+        party_size=party_size,
+        planned_row_id=planned_row_id,
+        arm=arm,
+    )
+    frozen_plan, _profile = sandbox_tools._load_profile_seed_plan(
+        fixture_id, party_size, planned_row_id
+    )
+    metadata = _read_json(
+        sandbox / "mapping_pilot" / "seed_metadata.json",
+        "checkpoint_seed_metadata",
+    )
+    counterbalance = metadata.get("counterbalance") if isinstance(metadata, Mapping) else None
+    party = metadata.get("party") if isinstance(metadata, Mapping) else None
+    mapping = metadata.get("mapping") if isinstance(metadata, Mapping) else None
+    fixed_seed = metadata.get("effective_seed") if isinstance(metadata, Mapping) else None
+    if (
+        not isinstance(metadata, Mapping)
+        or metadata.get("fixture_id") != fixture_id
+        or metadata.get("arm") != arm
+        or not isinstance(counterbalance, Mapping)
+        or counterbalance.get("row_type") != "planned"
+        or counterbalance.get("row_id") != planned_row_id
+        or counterbalance != frozen_plan.get("counterbalance")
+        or type(fixed_seed) is not int
+        or fixed_seed != frozen_plan.get("effective_seed")
+        or fixed_seed != counterbalance.get("fixed_seed")
+        or not isinstance(party, Mapping)
+        or party.get("size") != party_size
+        or not isinstance(party.get("members"), list)
+        or len(party["members"]) != party_size
+        or any(
+            not isinstance(member, str) or not member.strip()
+            for member in party["members"]
+        )
+        or len(set(party["members"])) != party_size
+        or not isinstance(mapping, Mapping)
+        or mapping.get("source_location_id") != travel_turn.get("source_location_id")
+        or mapping.get("source_location_id") != frozen_plan.get("source_location_id")
+        or mapping.get("runtime_location_id") != source_runtime_location_id
+    ):
+        raise CharacterizationError("checkpoint_seed_identity_mismatch")
+
+    tracker = _read_json(sandbox / "party_tracker.json", "checkpoint_party_tracker")
+    world = tracker.get("worldConditions") if isinstance(tracker, Mapping) else None
+    if (
+        not isinstance(world, Mapping)
+        or world.get("currentLocationId") != travel_turn.get("target_location_id")
+        or not isinstance(world.get("time"), str)
+        or world.get("time") == initial_time
+    ):
+        raise CharacterizationError("checkpoint_travel_state_not_persisted")
+
+    try:
+        final_state_sha256 = launcher._canonical_state_sha256(sandbox)
+    except Exception as exc:
+        raise CharacterizationError("checkpoint_final_state_hash_unavailable") from exc
+    if (
+        not isinstance(final_state_sha256, str)
+        or _SHA256.fullmatch(final_state_sha256) is None
+        or final_state_sha256 == initial_state_sha256
+    ):
+        raise CharacterizationError("checkpoint_state_hash_unchanged")
+    try:
+        launcher.validate_sandbox(
+            sandbox,
+            arm=arm,
+            fixture_id=fixture_id,
+            party_size=party_size,
+            resume=True,
+            resume_checkpoint_sha256=final_state_sha256,
+            project_root=root,
+        )
+    except Exception as exc:
+        raise CharacterizationError("checkpoint_moved_state_invalid") from exc
+
+    relative_root = (
+        Path("tmp/router-rollout/live-gate-preflight-checkpoints")
+        / run_id
+        / planned_row_id
+        / ("%s-p%d" % (fixture_id, party_size))
+    )
+    cursor = root
+    try:
+        for part in relative_root.parts[:-1]:
+            cursor = cursor / part
+            if cursor.is_symlink():
+                raise CharacterizationError("checkpoint_path_invalid")
+            if not cursor.exists():
+                cursor.mkdir(mode=0o700)
+            metadata_stat = cursor.lstat()
+            if not stat.S_ISDIR(metadata_stat.st_mode):
+                raise CharacterizationError("checkpoint_path_invalid")
+            if os.name == "posix" and stat.S_IMODE(metadata_stat.st_mode) & 0o022:
+                raise CharacterizationError("checkpoint_path_permissions_invalid")
+        checkpoint_parent = cursor
+        checkpoint_root = checkpoint_parent / relative_root.parts[-1]
+        if checkpoint_root.is_symlink() or checkpoint_root.exists():
+            raise CharacterizationError("checkpoint_already_exists")
+        resolved_checkpoint = checkpoint_root.resolve(strict=False)
+        resolved_tmp = (root / "tmp").resolve(strict=True)
+        resolved_checkpoint.relative_to(resolved_tmp)
+        resolved_sandbox = sandbox.resolve(strict=True)
+        try:
+            resolved_checkpoint.relative_to(resolved_sandbox)
+        except ValueError:
+            pass
+        else:
+            raise CharacterizationError("checkpoint_inside_active_sandbox")
+        try:
+            resolved_sandbox.relative_to(resolved_checkpoint)
+        except ValueError:
+            pass
+        else:
+            raise CharacterizationError("checkpoint_inside_active_sandbox")
+        checkpoint_root.mkdir(mode=0o700, exist_ok=False)
+    except FileExistsError as exc:
+        raise CharacterizationError("checkpoint_already_exists") from exc
+    except (OSError, RuntimeError, ValueError) as exc:
+        if isinstance(exc, CharacterizationError):
+            raise
+        raise CharacterizationError("checkpoint_directory_unavailable") from exc
+
+    try:
+        state_paths = (
+            ("party_tracker.json", False, True),
+            ("characters", True, True),
+            ("modules/Mapping_Pilot_Arena/areas", True, True),
+            ("modules/Mapping_Pilot_Arena/module_plot.json", False, False),
+            ("modules/encounters", True, False),
+            ("encounters", True, False),
+        )
+        for relative, is_directory, required in state_paths:
+            source = sandbox_tools._assert_no_symlink_path(
+                sandbox, relative, "checkpoint source state"
+            )
+            destination = checkpoint_root / relative
+            if not source.exists():
+                if required:
+                    raise CharacterizationError("checkpoint_state_incomplete")
+                continue
+            if source.is_symlink() or source.is_dir() != is_directory:
+                raise CharacterizationError("checkpoint_state_path_invalid")
+            if not is_directory and not stat.S_ISREG(source.lstat().st_mode):
+                raise CharacterizationError("checkpoint_state_path_invalid")
+            destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            if is_directory:
+                sandbox_tools._copy_checkpoint_tree(source, destination)
+            else:
+                shutil.copy2(source, destination)
+
+        seed_metadata_source = sandbox_tools._assert_no_symlink_path(
+            sandbox,
+            "mapping_pilot/seed_metadata.json",
+            "checkpoint seed metadata",
+        )
+        if (
+            not seed_metadata_source.is_file()
+            or not stat.S_ISREG(seed_metadata_source.lstat().st_mode)
+        ):
+            raise CharacterizationError("checkpoint_seed_metadata_unavailable")
+        seed_metadata_destination = checkpoint_root / "mapping_pilot" / "seed_metadata.json"
+        seed_metadata_destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        shutil.copy2(seed_metadata_source, seed_metadata_destination)
+        copied_state_sha256 = launcher._canonical_state_sha256(checkpoint_root)
+        if copied_state_sha256 != final_state_sha256:
+            raise CharacterizationError("checkpoint_copied_state_hash_mismatch")
+
+        attestation = {
+            "schema_version": 1,
+            "source_sha": source_sha,
+            "run_id": run_id,
+            "row_id": planned_row_id,
+            "fixture_id": fixture_id,
+            "party_size": party_size,
+            "arm": arm,
+            "fixed_seed": fixed_seed,
+            "step_id": travel_turn["step_id"],
+            "source_location_id": travel_turn["source_location_id"],
+            "source_runtime_location_id": source_runtime_location_id,
+            "target_source_location_id": travel_turn["target_source_location_id"],
+            "target_location_id": travel_turn["target_location_id"],
+            "initial_location_id": source_runtime_location_id,
+            "final_location_id": world["currentLocationId"],
+            "initial_state_sha256": initial_state_sha256,
+            "state_sha256": final_state_sha256,
+            "initial_time": initial_time,
+            "final_time": world.get("time"),
+            "travel_proof": dict(travel_proof),
+            "persistence": {
+                "host_stopped_before_checkpoint": True,
+                "canonical_state_hash_verified": True,
+                "resume_state_validation": "passed",
+            },
+            "checkpoint_root": relative_root.as_posix(),
+        }
+        attestation_path = checkpoint_root / "attestation.json"
+        _write_json(attestation_path, attestation)
+        attestation_sha256 = hashlib.sha256(attestation_path.read_bytes()).hexdigest()
+        descriptor = {
+            "checkpoint_root": relative_root.as_posix(),
+            "state_sha256": final_state_sha256,
+            "row_id": planned_row_id,
+            "fixture_id": fixture_id,
+            "party_size": party_size,
+            "arm": arm,
+            "fixed_seed": fixed_seed,
+        }
+        return descriptor, {
+            "path": attestation_path.relative_to(root).as_posix(),
+            "sha256": attestation_sha256,
+        }
+    except BaseException:
+        if not checkpoint_root.is_symlink() and checkpoint_root.exists():
+            shutil.rmtree(checkpoint_root)
+        raise
+
+
+def _validate_prepared_sandbox(
+    *,
+    fixture_id: str,
+    party_size: int,
+    lifecycle: str,
+    resume_checkpoint_sha256: str | None,
+    checkpoint_travel: bool = False,
+) -> tuple[Path, str, str, str, dict[str, Any], str]:
+    from scripts.live_gate_preflight_profiles import (
+        copy_profile_document,
+        load_profile_coverage,
+    )
+    from scripts.live_gate_preflight_safety import validate_sandbox_config_location
+    from scripts.mapping_pilot import launcher
+
+    coverage = load_profile_coverage()
+    if coverage["fixture_party_pair_count"] != 8 or coverage["replacement_only_rows_activated"]:
+        raise CharacterizationError("profile_declaration_coverage_invalid")
+    profiles = copy_profile_document().get("profiles")
+    profile = next(
+        (
+            row
+            for row in profiles
+            if isinstance(row, Mapping)
+            and row.get("fixture_id") == fixture_id
+            and row.get("party_size") == party_size
+        ),
+        None,
+    )
+    if not isinstance(profile, Mapping):
+        raise CharacterizationError("fixture_party_profile_missing")
+
+    sandbox = PROJECT_ROOT / SANDBOX_RELATIVE
+    if sandbox.is_symlink() or not sandbox.is_dir():
+        raise CharacterizationError("prepared_sandbox_unavailable")
+    sandbox = sandbox.resolve(strict=True)
+    try:
+        sandbox.relative_to((PROJECT_ROOT / "tmp").resolve(strict=True))
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise CharacterizationError("prepared_sandbox_path_invalid") from exc
+    if (PROJECT_ROOT / "tmp").is_symlink():
+        raise CharacterizationError("prepared_sandbox_path_invalid")
+    config_path = validate_sandbox_config_location(
+        SANDBOX_RELATIVE / "config.py",
+        sandbox_root=SANDBOX_RELATIVE,
+        project_root=PROJECT_ROOT,
+    )
+    if config_path != sandbox / "config.py":
+        raise CharacterizationError("prepared_sandbox_config_invalid")
+    sandbox_provider_key_placeholder = _require_synthetic_sandbox_config(config_path)
+
+    metadata_path = _safe_project_file(
+        SANDBOX_RELATIVE / "mapping_pilot" / "seed_metadata.json",
+        "sandbox_seed_metadata",
+    )
+    metadata = _read_json(metadata_path, "sandbox_seed_metadata")
+    if not isinstance(metadata, Mapping) or metadata.get("fixture_id") != fixture_id:
+        raise CharacterizationError("prepared_sandbox_fixture_mismatch")
+    party = metadata.get("party")
+    members = party.get("members") if isinstance(party, Mapping) else None
+    if (
+        not isinstance(party, Mapping)
+        or party.get("size") != party_size
+        or not isinstance(members, list)
+        or len(members) != party_size
+        or any(not isinstance(member, str) or not member.strip() for member in members)
+    ):
+        raise CharacterizationError("prepared_sandbox_party_mismatch")
+    counterbalance = metadata.get("counterbalance")
+    if not isinstance(counterbalance, Mapping):
+        raise CharacterizationError("prepared_sandbox_row_metadata_invalid")
+    row_id = counterbalance.get("row_id")
+    if (
+        not isinstance(row_id, str)
+        or row_id not in profile.get("planned_row_ids", [])
+        or counterbalance.get("row_type") != "planned"
+    ):
+        raise CharacterizationError("prepared_sandbox_must_use_bound_planned_row")
+    frozen_path = _safe_project_file(
+        "plans/v2-mapping-pilot-prereg/counterbalance.json",
+        "frozen_counterbalance",
+    )
+    frozen = _read_json(frozen_path, "frozen_counterbalance")
+    rows = frozen.get("rows") if isinstance(frozen, Mapping) else None
+    frozen_row = next(
+        (
+            row
+            for row in rows or []
+            if isinstance(row, Mapping) and row.get("row_id") == row_id
+        ),
+        None,
+    )
+    if (
+        not isinstance(frozen_row, Mapping)
+        or frozen_row.get("row_type") != "planned"
+        or frozen_row.get("party") != party_size
+        or frozen_row.get("arm") != metadata.get("arm")
+        or frozen_row.get("script") != counterbalance.get("script")
+    ):
+        raise CharacterizationError("prepared_sandbox_row_binding_mismatch")
+    script_path = _safe_project_file(
+        Path("plans/v2-mapping-pilot-prereg") / str(frozen_row["script"]),
+        "frozen_script",
+    )
+    script = _read_json(script_path, "frozen_script")
+    if fixture_id not in script.get("fixture_ids", []):
+        raise CharacterizationError("prepared_sandbox_script_fixture_mismatch")
+    if checkpoint_travel:
+        mapping = metadata.get("mapping")
+        source_location_id = (
+            mapping.get("source_location_id") if isinstance(mapping, Mapping) else None
+        )
+        if not isinstance(source_location_id, str):
+            raise CharacterizationError("prepared_sandbox_mapping_identity_invalid")
+        first_turn = _resolve_checkpoint_travel_turn(
+            script=script,
+            fixture_id=fixture_id,
+            party_size=party_size,
+            members=members,
+            source_location_id=source_location_id,
+        )
+        if first_turn is None:
+            raise CharacterizationError("checkpoint_travel_turn_missing")
+    else:
+        turns = script.get("turns")
+        scripted_turn = turns[0] if isinstance(turns, list) and turns else None
+        actor = scripted_turn.get("actor") if isinstance(scripted_turn, Mapping) else None
+        character = actor.get("party_%d" % party_size) if isinstance(actor, Mapping) else None
+        step_id = scripted_turn.get("id") if isinstance(scripted_turn, Mapping) else None
+        utterance = scripted_turn.get("utterance") if isinstance(scripted_turn, Mapping) else None
+        if (
+            not isinstance(step_id, str)
+            or not _SAFE_RUN_ID.fullmatch(step_id)
+            or not isinstance(utterance, str)
+            or not utterance.strip()
+            or not isinstance(character, str)
+            or character not in members
+        ):
+            raise CharacterizationError("prepared_sandbox_first_scripted_turn_invalid")
+        first_turn = {
+            "step_id": step_id,
+            "utterance": utterance,
+            "character": character,
+        }
+    if (
+        counterbalance.get("fixed_seed") != metadata.get("effective_seed")
+        or frozen_row.get("fixed_seed") != metadata.get("effective_seed")
+    ):
+        raise CharacterizationError("prepared_sandbox_seed_binding_mismatch")
+
+    resume = lifecycle == "resume"
+    try:
+        launcher.validate_sandbox(
+            sandbox,
+            arm=str(metadata.get("arm")),
+            fixture_id=fixture_id,
+            party_size=party_size,
+            resume=resume,
+            resume_checkpoint_sha256=resume_checkpoint_sha256,
+            project_root=PROJECT_ROOT,
+        )
+    except Exception as exc:
+        raise CharacterizationError("prepared_sandbox_validation_failed") from exc
+    return (
+        sandbox,
+        row_id,
+        str(metadata["arm"]),
+        profile["profile_id"],
+        dict(first_turn),
+        sandbox_provider_key_placeholder,
+    )
+
+
+def _require_synthetic_sandbox_config(config_path: Path) -> str:
+    """Require placeholder-only provider values before characterization launch."""
+    from scripts.live_gate_preflight_sandbox import _SYNTHETIC_CONFIG
+    from scripts.live_gate_preflight_safety import SANDBOX_PROVIDER_KEY_PLACEHOLDER
+
+    if config_path.is_symlink() or not config_path.is_file():
+        raise CharacterizationError("prepared_sandbox_config_invalid")
+    try:
+        observed = config_path.read_bytes()
+    except OSError as exc:
+        raise CharacterizationError("prepared_sandbox_config_unavailable") from exc
+    try:
+        tree = ast.parse(observed.decode("ascii"), filename=str(config_path))
+    except (SyntaxError, UnicodeError) as exc:
+        raise CharacterizationError("prepared_sandbox_config_identity_mismatch") from exc
+    provider_values: dict[str, str] = {}
+    for statement in tree.body:
+        if not isinstance(statement, ast.Assign):
+            continue
+        provider_names = {
+            target.id
+            for target in statement.targets
+            if isinstance(target, ast.Name) and target.id in _KNOWN_PROVIDER_KEYS
+        }
+        for name in provider_names:
+            value = statement.value
+            if (
+                name in provider_values
+                or not isinstance(value, ast.Constant)
+                or type(value.value) is not str
+                or value.value != SANDBOX_PROVIDER_KEY_PLACEHOLDER
+            ):
+                raise CharacterizationError(
+                    "prepared_sandbox_provider_key_placeholder_invalid"
+                )
+            provider_values[name] = value.value
+    if set(provider_values) != set(_KNOWN_PROVIDER_KEYS):
+        raise CharacterizationError("prepared_sandbox_provider_key_placeholder_invalid")
+    if observed != _SYNTHETIC_CONFIG.encode("ascii"):
+        raise CharacterizationError("prepared_sandbox_config_identity_mismatch")
+    return SANDBOX_PROVIDER_KEY_PLACEHOLDER
+
+
+def _git_common_directory() -> Path:
+    raw = _git_output(("rev-parse", "--git-common-dir"))
+    path = Path(raw)
+    if not path.is_absolute():
+        path = PROJECT_ROOT / path
+    try:
+        resolved = path.resolve(strict=True)
+        resolved.relative_to(PROJECT_ROOT)
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise CharacterizationError("shared_live_window_lock_outside_repository") from exc
+    if not resolved.is_dir() or path.is_symlink():
+        raise CharacterizationError("shared_live_window_lock_unavailable")
+    return resolved
+
+
+def _append_lock_log(path: Path, record: Mapping[str, Any]) -> dict[str, Any]:
+    parent_metadata = path.parent.lstat()
+    get_uid = getattr(os, "getuid", None)
+    current_uid = get_uid() if callable(get_uid) else None
+    if (
+        not stat.S_ISDIR(parent_metadata.st_mode)
+        or path.parent.is_symlink()
+        or (current_uid is not None and parent_metadata.st_uid != current_uid)
+        or (os.name == "posix" and stat.S_IMODE(parent_metadata.st_mode) & 0o022)
+    ):
+        raise OSError("live_window_booking_directory_invalid")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags, 0o600)
+    try:
+        metadata = os.fstat(descriptor)
+        get_uid = getattr(os, "getuid", None)
+        current_uid = get_uid() if callable(get_uid) else None
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_nlink != 1
+            or (current_uid is not None and metadata.st_uid != current_uid)
+        ):
+            raise OSError("live_window_booking_log_invalid")
+        os.fchmod(descriptor, 0o600)
+        line = json.dumps(
+            dict(record), ensure_ascii=True, sort_keys=True, separators=(",", ":")
+        ).encode("ascii") + b"\n"
+        offset = metadata.st_size
+        _write_all(descriptor, line)
+        os.fsync(descriptor)
+        relative_path = path.resolve(strict=True).relative_to(PROJECT_ROOT).as_posix()
+        return {
+            "path": relative_path,
+            "byte_offset": offset,
+            "byte_length": len(line),
+            "line_sha256": hashlib.sha256(line).hexdigest(),
+        }
+    finally:
+        os.close(descriptor)
+
+
+def _write_all(descriptor: int, value: bytes) -> None:
+    offset = 0
+    while offset < len(value):
+        written = os.write(descriptor, value[offset:])
+        if written <= 0:
+            raise OSError("short_write")
+        offset += written
+
+
+class _ProfileCharacterizationLock:
+    """Small, exclusive adapter for the shared git-common-dir live-window lock."""
+
+    def __init__(self, common_directory: Path, holder_record: Mapping[str, Any]) -> None:
+        self.coordination_directory = common_directory / "neq-coordination"
+        self.lock_directory = self.coordination_directory / "live-window.lock"
+        self.holder_record = dict(holder_record)
+        booking_id = holder_record.get("booking_id")
+        self.booking_id = booking_id if isinstance(booking_id, str) else ""
+        self.acquired = False
+        self.recorded = False
+        self.coordination_identity: tuple[int, int] | None = None
+        self.lock_identity: tuple[int, int] | None = None
+        self.holder_identity: tuple[int, int] | None = None
+        self.release_attempted = False
+        self.release_succeeded = False
+        self.lock_directory_removed = False
+        self.release_record: dict[str, Any] | None = None
+        self.release_log_reference: dict[str, Any] | None = None
+
+    def acquire(self) -> bool:
+        if not _valid_live_window_lock_record(self.holder_record):
+            return False
+        if self.coordination_directory.is_symlink():
+            return False
+        try:
+            self.coordination_directory.mkdir(mode=0o700, parents=False, exist_ok=True)
+            coordination_metadata = self.coordination_directory.lstat()
+            get_uid = getattr(os, "getuid", None)
+            current_uid = get_uid() if callable(get_uid) else None
+            if (
+                not stat.S_ISDIR(coordination_metadata.st_mode)
+                or (current_uid is not None and coordination_metadata.st_uid != current_uid)
+                or (
+                    os.name == "posix"
+                    and stat.S_IMODE(coordination_metadata.st_mode) & 0o022
+                )
+            ):
+                return False
+            self.coordination_identity = (
+                coordination_metadata.st_dev,
+                coordination_metadata.st_ino,
+            )
+            self.lock_directory.mkdir(mode=0o700, exist_ok=False)
+            lock_metadata = self.lock_directory.lstat()
+            if not stat.S_ISDIR(lock_metadata.st_mode):
+                return False
+            self.lock_identity = (lock_metadata.st_dev, lock_metadata.st_ino)
+        except (FileExistsError, OSError):
+            return False
+        self.acquired = True
+        holder_path = self.lock_directory / "holder.json"
+        try:
+            descriptor = os.open(
+                holder_path,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+                0o600,
+            )
+            try:
+                holder_metadata = os.fstat(descriptor)
+                self.holder_identity = (holder_metadata.st_dev, holder_metadata.st_ino)
+                raw = json.dumps(
+                    self.holder_record,
+                    ensure_ascii=True,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("ascii") + b"\n"
+                _write_all(descriptor, raw)
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+            _append_lock_log(self.coordination_directory / "bookings.log", self.holder_record)
+        except (OSError, TypeError, ValueError):
+            self._remove_owned_holder()
+            return False
+        self.recorded = True
+        return True
+
+    def release(self, release_record: Mapping[str, Any]) -> bool:
+        self.release_attempted = True
+        self.release_succeeded = False
+        self.lock_directory_removed = False
+        self.release_record = None
+        self.release_log_reference = None
+        if not self.acquired or not self.recorded:
+            return False
+        holder_path = self.lock_directory / "holder.json"
+        try:
+            if not self._coordination_directory_is_owned():
+                return False
+            lock_metadata = self.lock_directory.lstat()
+            if (
+                not stat.S_ISDIR(lock_metadata.st_mode)
+                or self.lock_identity != (lock_metadata.st_dev, lock_metadata.st_ino)
+            ):
+                return False
+            metadata = holder_path.lstat()
+            if (
+                not stat.S_ISREG(metadata.st_mode)
+                or self.holder_identity != (metadata.st_dev, metadata.st_ino)
+            ):
+                return False
+            holder = _read_json(holder_path, "live_window_holder")
+            release_identity = (
+                {key: release_record.get(key) for key in self.holder_record}
+                if isinstance(release_record, Mapping)
+                else None
+            )
+            if (
+                not isinstance(holder, Mapping)
+                or dict(holder) != self.holder_record
+                or holder.get("booking_id") != self.booking_id
+                or not _valid_live_window_lock_record(holder)
+                or release_identity != self.holder_record
+                or not _valid_lock_release_record(release_record, self.booking_id)
+            ):
+                return False
+            holder_path.unlink()
+            self.lock_directory.rmdir()
+        except (OSError, CharacterizationError, ValueError):
+            return False
+        self.lock_directory_removed = True
+        self.acquired = False
+        self.recorded = False
+        self.lock_identity = None
+        self.holder_identity = None
+        if not self._coordination_directory_is_owned():
+            return False
+        try:
+            self.release_log_reference = _append_lock_log(
+                self.coordination_directory / "bookings.log", release_record
+            )
+        except (OSError, CharacterizationError, TypeError, ValueError):
+            return False
+        self.release_record = dict(release_record)
+        self.release_succeeded = True
+        return True
+
+    def _coordination_directory_is_owned(self) -> bool:
+        try:
+            metadata = self.coordination_directory.lstat()
+        except OSError:
+            return False
+        get_uid = getattr(os, "getuid", None)
+        current_uid = get_uid() if callable(get_uid) else None
+        return bool(
+            stat.S_ISDIR(metadata.st_mode)
+            and not self.coordination_directory.is_symlink()
+            and self.coordination_identity
+            == (metadata.st_dev, metadata.st_ino)
+            and (current_uid is None or metadata.st_uid == current_uid)
+            and not (
+                os.name == "posix"
+                and stat.S_IMODE(metadata.st_mode) & 0o022
+            )
+        )
+
+    def _remove_owned_holder(self) -> None:
+        if not self.acquired:
+            return
+        try:
+            lock_metadata = self.lock_directory.lstat()
+            if (
+                not stat.S_ISDIR(lock_metadata.st_mode)
+                or self.lock_identity != (lock_metadata.st_dev, lock_metadata.st_ino)
+            ):
+                return
+            holder_path = self.lock_directory / "holder.json"
+            holder_metadata = holder_path.lstat()
+            if (
+                stat.S_ISREG(holder_metadata.st_mode)
+                and self.holder_identity == (holder_metadata.st_dev, holder_metadata.st_ino)
+            ):
+                holder_path.unlink()
+            self.lock_directory.rmdir()
+        except OSError:
+            return
+        self.acquired = False
+        self.coordination_identity = None
+        self.lock_identity = None
+        self.holder_identity = None
+
+
+def _port_state(port: int) -> tuple[bool, bool]:
+    """Return (listener observed, observation complete) using loopback connects."""
+    listener = False
+    for family, address in (
+        (socket.AF_INET, ("127.0.0.1", port)),
+        (socket.AF_INET6, ("::1", port, 0, 0)),
+    ):
+        try:
+            with socket.socket(family, socket.SOCK_STREAM) as probe:
+                probe.settimeout(0.5)
+                result = probe.connect_ex(address)
+        except OSError as exc:
+            if exc.errno in (
+                errno.EAFNOSUPPORT,
+                errno.EPROTONOSUPPORT,
+                getattr(errno, "EPFNOSUPPORT", -1),
+            ):
+                continue
+            return listener, False
+        if result == 0:
+            listener = True
+        elif result not in (
+            errno.ECONNREFUSED,
+            errno.EHOSTUNREACH,
+            errno.ENETUNREACH,
+            errno.EAFNOSUPPORT,
+            errno.EPROTONOSUPPORT,
+        ):
+            return listener, False
+    return listener, True
+
+
+def _exclusive_bind_port_state(port: int) -> tuple[bool, bool]:
+    """Return (port occupied, observation complete) via exclusive bind-and-close."""
+    observation = _exclusive_bind_port_observation(port)
+    return observation["result"] == "occupied", observation["observation_complete"]
+
+
+def _exclusive_bind_port_observation(port: int) -> dict[str, Any]:
+    """Capture concrete evidence for one exclusive loopback bind-and-close."""
+    observed_at_ns = time.time_ns()
+    probe: socket.socket | None = None
+    socket_created = False
+    bind_attempted = False
+    bind_succeeded = False
+    socket_closed: bool | None = None
+    error: Exception | None = None
+    if type(port) is not int or not 1 <= port <= 65535:
+        return {
+            "schema_version": 1,
+            "method": "exclusive-bind-close",
+            "transport": "tcp",
+            "address": "127.0.0.1",
+            "port": port,
+            "reuse_address": False,
+            "observed_at_ns": observed_at_ns,
+            "socket_created": False,
+            "bind_attempted": False,
+            "bind_succeeded": False,
+            "socket_closed": None,
+            "result": "unobservable",
+            "error_errno": None,
+            "error_type": "InvalidPort",
+            "observation_complete": False,
+        }
+    try:
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        socket_created = True
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 0)
+        bind_attempted = True
+        probe.bind(("127.0.0.1", port))
+        bind_succeeded = True
+    except Exception as exc:
+        error = exc
+    finally:
+        if probe is not None:
+            try:
+                probe.close()
+                socket_closed = True
+            except Exception as exc:
+                error = exc
+                socket_closed = False
+    if bind_succeeded and socket_closed is True:
+        result = "free"
+    elif (
+        error is not None
+        and getattr(error, "errno", None) == errno.EADDRINUSE
+        and socket_closed is True
+    ):
+        result = "occupied"
+    else:
+        result = "unobservable"
+    return {
+        "schema_version": 1,
+        "method": "exclusive-bind-close",
+        "transport": "tcp",
+        "address": "127.0.0.1",
+        "port": port,
+        "reuse_address": False,
+        "observed_at_ns": observed_at_ns,
+        "socket_created": socket_created,
+        "bind_attempted": bind_attempted,
+        "bind_succeeded": bind_succeeded,
+        "socket_closed": socket_closed,
+        "result": result,
+        "error_errno": getattr(error, "errno", None) if error is not None else None,
+        "error_type": type(error).__name__ if error is not None else None,
+        "observation_complete": result in ("free", "occupied"),
+    }
+
+
+def _required_port_observations() -> dict[int, dict[str, Any]]:
+    return {
+        port: _exclusive_bind_port_observation(port) for port in REQUIRED_PORTS
+    }
+
+
+def _teardown_port_observation_kind(value: Any, port: int) -> str | None:
+    """Classify only complete exclusive-bind evidence for one required port."""
+    fields = {
+        "schema_version",
+        "method",
+        "transport",
+        "address",
+        "port",
+        "reuse_address",
+        "observed_at_ns",
+        "socket_created",
+        "bind_attempted",
+        "bind_succeeded",
+        "socket_closed",
+        "result",
+        "error_errno",
+        "error_type",
+        "observation_complete",
+    }
+    if (
+        not isinstance(value, Mapping)
+        or set(value) != fields
+        or type(value.get("schema_version")) is not int
+        or value.get("schema_version") != 1
+        or value.get("method") != "exclusive-bind-close"
+        or value.get("transport") != "tcp"
+        or value.get("address") != "127.0.0.1"
+        or type(value.get("port")) is not int
+        or value.get("port") != port
+        or value.get("reuse_address") is not False
+        or type(value.get("observed_at_ns")) is not int
+        or value.get("observed_at_ns") <= 0
+        or value.get("socket_created") is not True
+        or value.get("bind_attempted") is not True
+        or value.get("socket_closed") is not True
+        or value.get("observation_complete") is not True
+    ):
+        return None
+    if (
+        value.get("result") == "free"
+        and value.get("bind_succeeded") is True
+        and value.get("error_errno") is None
+        and value.get("error_type") is None
+    ):
+        return "free"
+    if (
+        value.get("result") == "occupied"
+        and value.get("bind_succeeded") is False
+        and value.get("error_errno") == errno.EADDRINUSE
+        and isinstance(value.get("error_type"), str)
+        and bool(value.get("error_type"))
+    ):
+        return "occupied"
+    return None
+
+
+def _unobserved_listener_census(
+    port: int, failure_code: str
+) -> dict[str, Any]:
+    command = [
+        LSOF_EXECUTABLE,
+        "-nP",
+        "-iTCP:%d" % port,
+        "-sTCP:LISTEN",
+    ]
+    identity = {
+        "observer": "lsof",
+        "census_method": "tcp-listen",
+        "port": port,
+        "command": command,
+        "returncode": None,
+        "stdout_byte_count": 0,
+        "stdout_sha256": hashlib.sha256(b"").hexdigest(),
+    }
+    return {
+        "schema_version": 1,
+        "method": "lsof-tcp-listen",
+        **identity,
+        "identity_sha256": _canonical_json_sha256(identity),
+        "observed": False,
+        "parseable": False,
+        "listener_pids": [],
+        "failure_code": failure_code,
+    }
+
+
+def _wait_for_teardown_ports(
+    *,
+    lock_held: bool,
+    monotonic_ns: Callable[[], int],
+    sleeper: Callable[[float], None],
+) -> dict[str, Any]:
+    """Wait at most 75 seconds for both exclusive binds under the held lock."""
+    wait: dict[str, Any] = {
+        "schema_version": 1,
+        "clock": "time.monotonic_ns",
+        "lock_held": lock_held is True,
+        "status": "failed",
+        "failure_code": None,
+        "timeout_ns": TEARDOWN_PORT_WAIT_TIMEOUT_NS,
+        "poll_interval_ns": TEARDOWN_PORT_WAIT_POLL_INTERVAL_NS,
+        "started_monotonic_ns": None,
+        "completed_monotonic_ns": None,
+        "elapsed_monotonic_ns": None,
+        "attempts": [],
+        "initial": None,
+        "final": None,
+        "final_process_census": None,
+    }
+    if type(lock_held) is not bool or not lock_held:
+        wait["failure_code"] = "teardown_wait_lock_not_held"
+        return wait
+
+    try:
+        started_ns = monotonic_ns()
+    except Exception as exc:
+        wait["failure_code"] = "teardown_monotonic_clock_failed_" + type(exc).__name__
+        return wait
+    if type(started_ns) is not int or started_ns < 0:
+        wait["failure_code"] = "teardown_monotonic_clock_invalid"
+        return wait
+    deadline_ns = started_ns + TEARDOWN_PORT_WAIT_TIMEOUT_NS
+    wait["started_monotonic_ns"] = started_ns
+    last_attempt_started_ns: int | None = None
+    last_clock_ns = started_ns
+    def finish(code: str | None, at_ns: int) -> dict[str, Any]:
+        elapsed_ns = at_ns - started_ns
+        if elapsed_ns < 0:
+            code = code or "teardown_monotonic_clock_invalid"
+            elapsed_ns = 0
+        wait["completed_monotonic_ns"] = at_ns
+        wait["elapsed_monotonic_ns"] = elapsed_ns
+        wait["status"] = "ports_free" if code is None else "failed"
+        wait["failure_code"] = code
+        attempts = wait["attempts"]
+        wait["initial"] = attempts[0] if attempts else None
+        wait["final"] = attempts[-1] if attempts else None
+        return wait
+
+    while True:
+        try:
+            now_ns = monotonic_ns()
+        except Exception as exc:
+            failure_code = "teardown_monotonic_clock_failed_" + type(exc).__name__
+            return finish(failure_code, last_clock_ns)
+        if type(now_ns) is not int or now_ns < last_clock_ns:
+            return finish("teardown_monotonic_clock_invalid", last_clock_ns)
+        last_clock_ns = now_ns
+        if now_ns >= deadline_ns:
+            return finish("teardown_port_wait_timeout", now_ns)
+
+        if last_attempt_started_ns is not None:
+            next_poll_ns = (
+                last_attempt_started_ns + TEARDOWN_PORT_WAIT_POLL_INTERVAL_NS
+            )
+            sleep_ns = max(0, next_poll_ns - now_ns)
+            if sleep_ns:
+                sleep_seconds = min(
+                    sleep_ns / 1_000_000_000,
+                    (deadline_ns - now_ns) / 1_000_000_000,
+                )
+                try:
+                    sleeper(sleep_seconds)
+                    now_ns = monotonic_ns()
+                except Exception as exc:
+                    failure_code = "teardown_wait_sleep_failed_" + type(exc).__name__
+                    return finish(failure_code, last_clock_ns)
+                if type(now_ns) is not int or now_ns < last_clock_ns:
+                    return finish("teardown_monotonic_clock_invalid", last_clock_ns)
+                last_clock_ns = now_ns
+                if now_ns >= deadline_ns:
+                    return finish("teardown_port_wait_timeout", now_ns)
+                if now_ns < next_poll_ns:
+                    return finish("teardown_wait_sleep_returned_early", now_ns)
+
+        attempt_started_ns = now_ns
+        last_attempt_started_ns = attempt_started_ns
+        attempt: dict[str, Any] = {
+            "started_monotonic_ns": attempt_started_ns,
+            "completed_monotonic_ns": attempt_started_ns,
+            "listener_census": {str(port): None for port in REQUIRED_PORTS},
+            "port_observations": {str(port): None for port in REQUIRED_PORTS},
+        }
+        census_failure: str | None = None
+        for index, port in enumerate(REQUIRED_PORTS):
+            try:
+                census_started_ns = monotonic_ns()
+            except Exception as exc:
+                census_failure = (
+                    "teardown_monotonic_clock_failed_" + type(exc).__name__
+                )
+                break
+            if type(census_started_ns) is not int or census_started_ns < last_clock_ns:
+                census_failure = "teardown_monotonic_clock_invalid"
+                break
+            last_clock_ns = census_started_ns
+            remaining_ns = deadline_ns - census_started_ns
+            ports_remaining = len(REQUIRED_PORTS) - index
+            if remaining_ns <= 0:
+                census_failure = "teardown_port_wait_timeout"
+                break
+            observer_timeout = min(
+                OBSERVER_TIMEOUT_SECONDS,
+                remaining_ns / ports_remaining / 1_000_000_000,
+            )
+            if observer_timeout <= 0:
+                census_failure = "teardown_port_wait_timeout"
+                break
+            try:
+                observation = _listener_census_observation(
+                    port, timeout_seconds=observer_timeout
+                )
+                if not isinstance(observation, Mapping):
+                    observation = _unobserved_listener_census(
+                        port, "listener_census_observation_invalid"
+                    )
+            except Exception as exc:
+                observation = _unobserved_listener_census(
+                    port,
+                    "listener_census_exception_" + type(exc).__name__,
+                )
+            attempt["listener_census"][str(port)] = dict(observation)
+            try:
+                census_completed_ns = monotonic_ns()
+            except Exception as exc:
+                census_failure = (
+                    "teardown_monotonic_clock_failed_" + type(exc).__name__
+                )
+                break
+            if (
+                type(census_completed_ns) is not int
+                or census_completed_ns < last_clock_ns
+            ):
+                census_failure = "teardown_monotonic_clock_invalid"
+                break
+            last_clock_ns = census_completed_ns
+            if census_completed_ns >= deadline_ns:
+                census_failure = "teardown_port_wait_timeout"
+                break
+            if not _listener_census_observation_is_valid(observation, port):
+                census_failure = "teardown_listener_census_malformed"
+                break
+            if observation.get("observed") is not True:
+                census_failure = (
+                    "teardown_listener_census_malformed"
+                    if observation.get("failure_code") == "listener_census_malformed"
+                    else "teardown_listener_census_unobservable"
+                )
+                break
+            listener_pids = observation.get("listener_pids")
+            if (
+                not isinstance(listener_pids, list)
+                or any(type(pid) is not int or pid <= 0 for pid in listener_pids)
+                or listener_pids != sorted(set(listener_pids))
+            ):
+                census_failure = "teardown_listener_census_malformed"
+                break
+            if listener_pids:
+                census_failure = "teardown_listener_present"
+                break
+
+        if census_failure is None:
+            try:
+                port_observations = _required_port_observations()
+            except Exception as exc:
+                census_failure = "teardown_port_bind_exception_" + type(exc).__name__
+                port_observations = {}
+            if isinstance(port_observations, Mapping):
+                for port in REQUIRED_PORTS:
+                    attempt["port_observations"][str(port)] = port_observations.get(
+                        port
+                    )
+
+        try:
+            attempt_completed_ns = monotonic_ns()
+        except Exception as exc:
+            attempt_completed_ns = last_clock_ns
+            census_failure = census_failure or (
+                "teardown_monotonic_clock_failed_" + type(exc).__name__
+            )
+        if (
+            type(attempt_completed_ns) is not int
+            or attempt_completed_ns < last_clock_ns
+        ):
+            attempt_completed_ns = last_clock_ns
+            census_failure = census_failure or "teardown_monotonic_clock_invalid"
+        last_clock_ns = attempt_completed_ns
+        attempt["completed_monotonic_ns"] = attempt_completed_ns
+        wait["attempts"].append(attempt)
+
+        if census_failure is not None:
+            return finish(census_failure, attempt_completed_ns)
+        if attempt_completed_ns > deadline_ns:
+            return finish("teardown_port_wait_timeout", attempt_completed_ns)
+
+        kinds = {
+            port: _teardown_port_observation_kind(
+                attempt["port_observations"].get(str(port)), port
+            )
+            for port in REQUIRED_PORTS
+        }
+        if any(kind is None for kind in kinds.values()):
+            return finish("teardown_port_bind_unexpected_error", attempt_completed_ns)
+        if all(kind == "free" for kind in kinds.values()):
+            return finish(None, attempt_completed_ns)
+        if not all(kind in ("free", "occupied") for kind in kinds.values()):
+            return finish("teardown_port_bind_unexpected_error", attempt_completed_ns)
+        if attempt_completed_ns >= deadline_ns:
+            return finish("teardown_port_wait_timeout", attempt_completed_ns)
+
+
+def _failed_teardown_wait_evidence(
+    *, lock_held: bool, failure_code: str
+) -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "clock": "time.monotonic_ns",
+        "lock_held": lock_held is True,
+        "status": "failed",
+        "failure_code": failure_code,
+        "timeout_ns": TEARDOWN_PORT_WAIT_TIMEOUT_NS,
+        "poll_interval_ns": TEARDOWN_PORT_WAIT_POLL_INTERVAL_NS,
+        "started_monotonic_ns": None,
+        "completed_monotonic_ns": None,
+        "elapsed_monotonic_ns": None,
+        "attempts": [],
+        "initial": None,
+        "final": None,
+        "final_process_census": None,
+    }
+
+
+def _port_is_free(port: int) -> bool:
+    if type(port) is not int or port not in REQUIRED_PORTS:
+        return False
+    port_occupied, socket_observed = _exclusive_bind_port_state(port)
+    return socket_observed and not port_occupied
+
+
+def _required_port_status() -> dict[int, bool]:
+    """Verify both ports reserved by the shared live-window lock."""
+    return {port: _port_is_free(port) for port in REQUIRED_PORTS}
+
+
+def _ports_are_free(status: Mapping[int, bool]) -> bool:
+    return set(status) == set(REQUIRED_PORTS) and all(
+        status.get(port) is True for port in REQUIRED_PORTS
+    )
+
+
+def _port_failure_code(status: Mapping[int, bool], phase: str) -> str | None:
+    for port in REQUIRED_PORTS:
+        if status.get(port) is not True:
+            return "port_%d_not_free_%s" % (port, phase)
+    return None
+
+
+def _valid_evidence_path(value: Any) -> bool:
+    if not isinstance(value, str) or "\\" in value:
+        return False
+    path = PurePosixPath(value)
+    return bool(
+        not path.is_absolute()
+        and ".." not in path.parts
+        and len(path.parts) >= 2
+        and path.parts[0] == "tmp"
+    )
+
+
+def _valid_lock_release_record(value: Any, booking_id: str) -> bool:
+    if not isinstance(value, Mapping):
+        return False
+    release_time = _parse_utc_timestamp(value.get("released_at_utc"))
+    start = _parse_utc_timestamp(value.get("window_start"))
+    end = _parse_utc_timestamp(value.get("window_end"))
+    ports_free = value.get("ports_free")
+    after_teardown_socket_pids = value.get("after_teardown_socket_pids")
+    teardown_schema_version = value.get("teardown_evidence_schema_version")
+    wait_fields = {
+        "teardown_wait_schema_version",
+        "teardown_wait_sha256",
+        "teardown_wait_elapsed_monotonic_ns",
+        "teardown_wait_completed_monotonic_ns",
+        "after_teardown_socket_sample_observed_monotonic_ns",
+    }
+    if teardown_schema_version == 1:
+        wait_contract_valid = not (set(value) & wait_fields)
+    elif teardown_schema_version == 2:
+        wait_elapsed_ns = value.get("teardown_wait_elapsed_monotonic_ns")
+        wait_completed_ns = value.get("teardown_wait_completed_monotonic_ns")
+        census_observed_ns = value.get(
+            "after_teardown_socket_sample_observed_monotonic_ns"
+        )
+        wait_contract_valid = bool(
+            type(value.get("teardown_wait_schema_version")) is int
+            and value.get("teardown_wait_schema_version") == 1
+            and isinstance(value.get("teardown_wait_sha256"), str)
+            and _SHA256.fullmatch(value.get("teardown_wait_sha256", "")) is not None
+            and type(wait_elapsed_ns) is int
+            and 0 <= wait_elapsed_ns <= TEARDOWN_PORT_WAIT_TIMEOUT_NS
+            and type(wait_completed_ns) is int
+            and wait_completed_ns >= 0
+            and type(census_observed_ns) is int
+            and census_observed_ns > wait_completed_ns
+        )
+    else:
+        wait_contract_valid = False
+    return bool(
+        value.get("event") == "released"
+        and value.get("booking_id") == booking_id
+        and release_time is not None
+        and start is not None
+        and end is not None
+        and start <= release_time <= end
+        and value.get("server_stopped") is True
+        and value.get("after_teardown_socket_sample_observed") is True
+        and isinstance(after_teardown_socket_pids, list)
+        and all(
+            type(pid) is int and pid > 0 for pid in after_teardown_socket_pids
+        )
+        and after_teardown_socket_pids
+        == sorted(set(after_teardown_socket_pids))
+        and _valid_evidence_path(value.get("after_teardown_socket_sample_path"))
+        and isinstance(value.get("after_teardown_socket_sample_sha256"), str)
+        and _SHA256.fullmatch(value.get("after_teardown_socket_sample_sha256", ""))
+        is not None
+        and isinstance(ports_free, Mapping)
+        and set(ports_free) == {str(port) for port in REQUIRED_PORTS}
+        and all(ports_free.get(str(port)) is True for port in REQUIRED_PORTS)
+        and _valid_evidence_path(value.get("evidence_path"))
+        and type(teardown_schema_version) is int
+        and wait_contract_valid
+        and _valid_evidence_path(value.get("teardown_evidence_path"))
+    )
+
+
+def _observer_bytes(value: Any) -> bytes:
+    if isinstance(value, bytes):
+        return value
+    if isinstance(value, str):
+        return value.encode("utf-8", errors="replace")
+    return b""
+
+
+def _run_observer_command(
+    command: Sequence[str],
+    *,
+    empty_result_is_success: bool = False,
+    max_output_bytes: int = MAX_OBSERVER_OUTPUT_BYTES,
+    timeout_seconds: float = OBSERVER_TIMEOUT_SECONDS,
+) -> tuple[dict[str, Any], bytes, bool]:
+    """Run one bounded local observer and retain a bounded raw output prefix."""
+    from scripts.live_gate_preflight_safety import run_guarded_subprocess
+
+    stdout = b""
+    stderr = b""
+    returncode: int | None = None
+    failure: str | None = None
+    try:
+        completed = run_guarded_subprocess(
+            list(command),
+            cwd=PROJECT_ROOT,
+            check=False,
+            capture_output=True,
+            timeout=timeout_seconds,
+        )
+        returncode = completed.returncode
+        stdout = _observer_bytes(completed.stdout)
+        stderr = _observer_bytes(completed.stderr)
+    except subprocess.TimeoutExpired as exc:
+        stdout = _observer_bytes(exc.stdout)
+        stderr = _observer_bytes(exc.stderr)
+        failure = "timeout"
+    except OSError as exc:
+        failure = type(exc).__name__
+
+    stdout_truncated = len(stdout) > max_output_bytes
+    stderr_truncated = len(stderr) > MAX_OBSERVER_OUTPUT_BYTES
+    stdout_prefix = stdout[:min(max_output_bytes, MAX_OBSERVER_OUTPUT_BYTES)]
+    stderr_prefix = stderr[:MAX_OBSERVER_OUTPUT_BYTES]
+    empty_success = (
+        empty_result_is_success
+        and returncode == 1
+        and not stdout
+        and not stderr
+    )
+    command_observed = bool(
+        failure is None
+        and (returncode == 0 or empty_success)
+        and not stdout_truncated
+        and not stderr_truncated
+        and not stderr
+    )
+    evidence = {
+        "command": list(command),
+        "returncode": returncode,
+        "failure": failure,
+        "stdout_byte_count": len(stdout),
+        "stdout_sha256": hashlib.sha256(stdout).hexdigest(),
+        "stdout_truncated": stdout_truncated,
+        "stdout_prefix_base64": base64.b64encode(stdout_prefix).decode("ascii"),
+        "stderr_byte_count": len(stderr),
+        "stderr_sha256": hashlib.sha256(stderr).hexdigest(),
+        "stderr_truncated": stderr_truncated,
+        "stderr_prefix_base64": base64.b64encode(stderr_prefix).decode("ascii"),
+        "observed": command_observed,
+    }
+    return evidence, stdout, command_observed
+
+
+def _parse_lsof_listener_pids(raw: bytes, *, port: int) -> tuple[set[int], bool]:
+    """Parse only numeric lsof TCP LISTEN rows for the requested lock port."""
+    if not isinstance(raw, bytes):
+        return set(), False
+    pids: set[int] = set()
+    expected_header = [
+        b"COMMAND",
+        b"PID",
+        b"USER",
+        b"FD",
+        b"TYPE",
+        b"DEVICE",
+        b"SIZE/OFF",
+        b"NODE",
+        b"NAME",
+    ]
+    saw_header = False
+    for line in raw.splitlines():
+        if not line.strip():
+            continue
+        header = line.split()
+        if header[0:2] == [b"COMMAND", b"PID"]:
+            if header != expected_header or saw_header or pids:
+                return set(), False
+            saw_header = True
+            continue
+        if not saw_header:
+            return set(), False
+        fields = line.split(None, 8)
+        if len(fields) != 9:
+            return set(), False
+        try:
+            pid = int(fields[1].decode("ascii"))
+            name = fields[8].decode("ascii")
+        except (UnicodeError, ValueError):
+            return set(), False
+        if (
+            pid <= 0
+            or fields[4] not in (b"IPv4", b"IPv6")
+            or fields[7] != b"TCP"
+        ):
+            return set(), False
+        name_fields = name.split()
+        if (
+            len(name_fields) != 2
+            or name_fields[1] != "(LISTEN)"
+            or ":" not in name_fields[0]
+        ):
+            return set(), False
+        _host, port_text = name_fields[0].rsplit(":", 1)
+        if not _host or not port_text.isdecimal() or int(port_text) != port:
+            return set(), False
+        pids.add(pid)
+    return pids, not raw.strip() or saw_header
+
+
+def _listener_pids(port: int) -> tuple[set[int], bool]:
+    """Observe listeners on a reserved port across all local interfaces."""
+    observation = _listener_census_observation(port)
+    return set(observation["listener_pids"]), observation["observed"] is True
+
+
+def _listener_census_observation(
+    port: int,
+    *,
+    timeout_seconds: float = OBSERVER_TIMEOUT_SECONDS,
+) -> dict[str, Any]:
+    """Return bounded, independently identified lsof evidence for one port."""
+    if type(port) is not int or port not in REQUIRED_PORTS:
+        return {
+            "schema_version": 1,
+            "method": "lsof-tcp-listen",
+            "port": port,
+            "command": [],
+            "returncode": None,
+            "stdout_byte_count": 0,
+            "stdout_sha256": hashlib.sha256(b"").hexdigest(),
+            "identity_sha256": None,
+            "observed": False,
+            "parseable": False,
+            "listener_pids": [],
+            "failure_code": "listener_census_port_invalid",
+        }
+    command = [
+        LSOF_EXECUTABLE,
+        "-nP",
+        "-iTCP:%d" % port,
+        "-sTCP:LISTEN",
+    ]
+    command_evidence, raw_output, command_observed = _run_observer_command(
+        command,
+        empty_result_is_success=True,
+        timeout_seconds=timeout_seconds,
+    )
+    pids, parseable = _parse_lsof_listener_pids(raw_output, port=port)
+    if command_evidence.get("returncode") == 0 and not raw_output.strip():
+        parseable = False
+    observed = command_observed and parseable
+    failure_code = (
+        None
+        if observed
+        else "listener_census_malformed"
+        if command_observed
+        else "listener_census_unavailable"
+    )
+    identity = {
+        "observer": "lsof",
+        "census_method": "tcp-listen",
+        "port": port,
+        "command": command,
+        "returncode": command_evidence.get("returncode"),
+        "stdout_byte_count": command_evidence.get("stdout_byte_count"),
+        "stdout_sha256": command_evidence.get("stdout_sha256"),
+    }
+    return {
+        "schema_version": 1,
+        "method": "lsof-tcp-listen",
+        "port": port,
+        **identity,
+        "identity_sha256": _canonical_json_sha256(identity),
+        "observed": observed,
+        "parseable": parseable,
+        "listener_pids": sorted(pids) if parseable else [],
+        "failure_code": failure_code,
+    }
+
+
+def _canonical_json_sha256(value: Any) -> str:
+    raw = json.dumps(
+        value,
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("ascii")
+    return hashlib.sha256(raw).hexdigest()
+
+
+def _listener_census_observation_is_valid(value: Any, port: int) -> bool:
+    fields = {
+        "schema_version",
+        "method",
+        "port",
+        "observer",
+        "census_method",
+        "command",
+        "returncode",
+        "stdout_byte_count",
+        "stdout_sha256",
+        "identity_sha256",
+        "observed",
+        "parseable",
+        "listener_pids",
+        "failure_code",
+    }
+    if not isinstance(value, Mapping) or set(value) != fields:
+        return False
+    command = [
+        LSOF_EXECUTABLE,
+        "-nP",
+        "-iTCP:%d" % port,
+        "-sTCP:LISTEN",
+    ]
+    identity = {
+        "observer": "lsof",
+        "census_method": "tcp-listen",
+        "port": port,
+        "command": command,
+        "returncode": value.get("returncode"),
+        "stdout_byte_count": value.get("stdout_byte_count"),
+        "stdout_sha256": value.get("stdout_sha256"),
+    }
+    pids = value.get("listener_pids")
+    observed = value.get("observed")
+    parseable = value.get("parseable")
+    if (
+        type(value.get("schema_version")) is not int
+        or value.get("schema_version") != 1
+        or value.get("method") != "lsof-tcp-listen"
+        or type(value.get("port")) is not int
+        or value.get("port") != port
+        or value.get("observer") != "lsof"
+        or value.get("census_method") != "tcp-listen"
+        or value.get("command") != command
+        or (
+            value.get("returncode") is not None
+            and type(value.get("returncode")) is not int
+        )
+        or type(value.get("stdout_byte_count")) is not int
+        or value.get("stdout_byte_count") < 0
+        or not isinstance(value.get("stdout_sha256"), str)
+        or _SHA256.fullmatch(value["stdout_sha256"]) is None
+        or value.get("identity_sha256") != _canonical_json_sha256(identity)
+        or type(observed) is not bool
+        or type(parseable) is not bool
+        or not isinstance(pids, list)
+        or any(type(pid) is not int or pid <= 0 for pid in pids)
+        or pids != sorted(set(pids))
+    ):
+        return False
+    if observed:
+        return bool(
+            parseable
+            and value.get("failure_code") is None
+            and value.get("returncode") in (0, 1)
+            and (
+                value.get("returncode") != 0
+                or value.get("stdout_byte_count") > 0
+            )
+            and (
+                value.get("returncode") != 1
+                or value.get("stdout_byte_count") == 0
+            )
+        )
+    return bool(
+        isinstance(value.get("failure_code"), str)
+        and value.get("failure_code")
+        and (not parseable or value.get("failure_code") == "listener_census_unavailable")
+    )
+
+
+def _parse_netstat_endpoint(value: bytes) -> dict[str, Any] | None:
+    """Parse one numeric macOS netstat endpoint; the final dot separates port."""
+    try:
+        text = value.decode("ascii")
+    except UnicodeError:
+        return None
+    if text == "*.*":
+        return {"host": "*", "port": None}
+    if text.startswith("*."):
+        host = "*"
+        raw_port = text[2:]
+    elif "." in text:
+        host, raw_port = text.rsplit(".", 1)
+    else:
+        return None
+    if raw_port == "*" and host == "*":
+        return {"host": "*", "port": None}
+    if not raw_port.isdecimal():
+        return None
+    port = int(raw_port)
+    if not 0 <= port <= 65535:
+        return None
+    if host != "*":
+        address_host = host.split("%", 1)[0]
+        try:
+            address = ipaddress.ip_address(address_host)
+        except ValueError:
+            return None
+        host = str(address)
+    return {"host": host, "port": port}
+
+
+def _parse_netstat_census(
+    raw: bytes, *, run_pids: set[int]
+) -> tuple[list[dict[str, Any]], dict[str, int], bool]:
+    """Filter process ownership before parsing or retaining any endpoint."""
+    if not isinstance(raw, bytes) or len(raw) > MAX_NETSTAT_OUTPUT_BYTES:
+        return [], {}, False
+    rows: list[dict[str, Any]] = []
+    counts = {
+        "internet_rows": 0,
+        "unattributed_rows": 0,
+        "pid_zero_rows": 0,
+        "foreign_process_rows": 0,
+        "run_pid_rows": 0,
+        "malformed_run_pid_rows": 0,
+    }
+    lines = raw.splitlines()
+    if len(lines) > MAX_NETSTAT_ROWS:
+        return [], counts, False
+    for line in lines:
+        tokens = line.split()
+        if not tokens:
+            continue
+        protocol = tokens[0].lower()
+        if protocol not in (b"tcp", b"tcp4", b"tcp6", b"udp", b"udp4", b"udp6"):
+            continue
+        counts["internet_rows"] += 1
+
+        # netstat's process name may contain spaces. Match its PID marker and
+        # fixed-width trailing fields directly in bytes before touching tokens 3/4.
+        owner_match = _NETSTAT_OWNER_PATTERN.search(line)
+        owner_suffix_start = 6 if protocol.startswith(b"tcp") else 5
+        owner_suffix = b" ".join(tokens[owner_suffix_start:])
+        candidate_matches = list(_NETSTAT_OWNER_PID_CANDIDATE_PATTERN.finditer(owner_suffix))
+        if not candidate_matches and protocol.startswith(b"tcp") and len(tokens) > 5:
+            # A missing TCP state token is malformed, but its process suffix
+            # still identifies an owned row that must fail closed.
+            candidate_matches = list(
+                _NETSTAT_OWNER_PID_CANDIDATE_PATTERN.finditer(b" ".join(tokens[5:]))
+            )
+        if owner_match is None:
+            if not candidate_matches:
+                counts["unattributed_rows"] += 1
+                continue
+            pid = int(candidate_matches[-1].group("pid"))
+        else:
+            pid = int(owner_match.group("pid"))
+        if pid == 0:
+            counts["pid_zero_rows"] += 1
+            continue
+        if pid not in run_pids:
+            counts["foreign_process_rows"] += 1
+            continue
+
+        counts["run_pid_rows"] += 1
+        if owner_match is None:
+            counts["malformed_run_pid_rows"] += 1
+            return [], counts, False
+        is_tcp = protocol.startswith(b"tcp")
+        if len(tokens) < (6 if is_tcp else 5):
+            counts["malformed_run_pid_rows"] += 1
+            return [], counts, False
+        local_endpoint = _parse_netstat_endpoint(tokens[3])
+        foreign_endpoint = _parse_netstat_endpoint(tokens[4])
+        if local_endpoint is None or foreign_endpoint is None:
+            counts["malformed_run_pid_rows"] += 1
+            return [], counts, False
+        state: str | None = None
+        if is_tcp:
+            try:
+                state = tokens[5].decode("ascii")
+            except UnicodeError:
+                counts["malformed_run_pid_rows"] += 1
+                return [], counts, False
+            if not state or not state.isascii() or not state.replace("_", "").isalpha():
+                counts["malformed_run_pid_rows"] += 1
+                return [], counts, False
+        rows.append(
+            {
+                "pid": pid,
+                "protocol": protocol.decode("ascii"),
+                "local": local_endpoint,
+                "foreign": foreign_endpoint,
+                "state": state,
+            }
+        )
+    return rows, counts, True
+
+
+def _non_loopback_endpoint(endpoint: Mapping[str, Any]) -> bool:
+    host = endpoint.get("host")
+    if not isinstance(host, str) or host == "*":
+        return False
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return True
+    return not address.is_loopback
+
+
+def _foreign_endpoint_recorded(
+    pid: int,
+    endpoint: Mapping[str, Any],
+    guard_events: Sequence[Mapping[str, Any]],
+) -> bool:
+    host = endpoint.get("host")
+    port = endpoint.get("port")
+    if not isinstance(host, str) or type(port) is not int:
+        return False
+    return any(
+        event.get("event_type") == "network_attempt"
+        and event.get("pid") == pid
+        and event.get("target_host") == host
+        and event.get("target_port") == port
+        for event in guard_events
+    )
+
+
+def _host_ready_listener_pids(rows: Sequence[Mapping[str, Any]]) -> list[int]:
+    """Return owners of run-owned TCP listeners bound to the host port."""
+    if not isinstance(rows, Sequence) or isinstance(rows, (str, bytes)):
+        return []
+    return sorted(
+        {
+            int(row["pid"])
+            for row in rows
+            if isinstance(row, Mapping)
+            and row.get("protocol") in ("tcp", "tcp4", "tcp6")
+            and row.get("state") == "LISTEN"
+            and isinstance(row.get("local"), Mapping)
+            and type(row["local"].get("port")) is int
+            and row["local"].get("port") == HOST_PORT
+            and type(row.get("pid")) is int
+            and row.get("pid") > 0
+        }
+    )
+
+
+def _authorized_guarded_process_tree(
+    roots: Mapping[int, tuple[str, int]],
+    guard_events: Sequence[Mapping[str, Any]],
+) -> dict[int, tuple[str, int]] | None:
+    """Resolve guarded descendants rooted in the exact launched process scopes."""
+    startup_by_pid: dict[int, list[Mapping[str, Any]]] = {}
+    for event in guard_events:
+        if event.get("event_type") == "guard_startup":
+            pid = event.get("pid")
+            if type(pid) is int and pid > 0:
+                startup_by_pid.setdefault(pid, []).append(event)
+
+    authorized: dict[int, tuple[str, int]] = {}
+    for pid, (role, process_group_id) in roots.items():
+        startups = startup_by_pid.get(pid, [])
+        if (
+            type(pid) is not int
+            or pid <= 0
+            or role not in ("parent", "host")
+            or type(process_group_id) is not int
+            or process_group_id <= 0
+            or len(startups) != 1
+            or startups[0].get("process_role") != role
+            or startups[0].get("process_group_id") != process_group_id
+        ):
+            return None
+        authorized[pid] = (role, process_group_id)
+
+    changed = True
+    while changed:
+        changed = False
+        for event in guard_events:
+            if event.get("event_type") != "subprocess_started":
+                continue
+            parent_pid = event.get("pid")
+            parent_identity = authorized.get(parent_pid)
+            child_pid = event.get("child_pid")
+            if (
+                parent_identity is None
+                or type(child_pid) is not int
+                or child_pid <= 0
+                or event.get("process_role") != parent_identity[0]
+                or event.get("process_group_id") != parent_identity[1]
+            ):
+                continue
+            child_startups = startup_by_pid.get(child_pid, [])
+            if len(child_startups) != 1:
+                continue
+            startup = child_startups[0]
+            child_group = startup.get("process_group_id")
+            child_identity = (startup.get("process_role"), child_group)
+            if (
+                startup.get("process_role") != parent_identity[0]
+                or type(child_group) is not int
+                or child_group not in (parent_identity[1], child_pid)
+            ):
+                continue
+            previous = authorized.get(child_pid)
+            if previous is None:
+                authorized[child_pid] = child_identity
+                changed = True
+            elif previous != child_identity:
+                return None
+    return authorized
+
+
+def _authorized_scoped_process_tree(
+    process_scopes: Sequence[Mapping[str, Any]],
+    guard_events: Sequence[Mapping[str, Any]],
+) -> dict[int, tuple[str, int]] | None:
+    if not process_scopes or any(not _valid_process_scope(scope) for scope in process_scopes):
+        return None
+    roots: dict[int, tuple[str, int]] = {}
+    for scope in process_scopes:
+        pid = int(scope["pid"])
+        identity = (str(scope["process_role"]), int(scope["process_group_id"]))
+        if pid in roots and roots[pid] != identity:
+            return None
+        roots[pid] = identity
+    return _authorized_guarded_process_tree(roots, guard_events)
+
+
+def _host_ready_listener_is_authorized(
+    sample: Any,
+    *,
+    host_pid: int,
+    guard_events: Sequence[Mapping[str, Any]],
+    expected_run_id: str,
+) -> bool:
+    """Require an observed host-owned listener, not just any socket by its PID."""
+    from scripts.live_gate_preflight_safety import validate_guard_event_records
+
+    if (
+        not isinstance(sample, Mapping)
+        or sample.get("phase") != "host_ready"
+        or sample.get("port") != HOST_PORT
+        or sample.get("observed") is not True
+        or sample.get("failure_code") is not None
+        or type(host_pid) is not int
+        or host_pid <= 0
+        or not isinstance(expected_run_id, str)
+        or not isinstance(guard_events, Sequence)
+        or isinstance(guard_events, (str, bytes))
+    ):
+        return False
+    socket_pids = sample.get("pids")
+    listener_pids = sample.get("listener_pids")
+    if (
+        not isinstance(socket_pids, list)
+        or any(type(pid) is not int or pid <= 0 for pid in socket_pids)
+        or socket_pids != sorted(set(socket_pids))
+        or not isinstance(listener_pids, list)
+        or not listener_pids
+        or any(type(pid) is not int or pid <= 0 for pid in listener_pids)
+        or listener_pids != sorted(set(listener_pids))
+        or not set(listener_pids).issubset(socket_pids)
+    ):
+        return False
+
+    events = list(guard_events)
+    if not validate_guard_event_records(events, expected_run_id=expected_run_id):
+        return False
+    authorized_processes = _authorized_guarded_process_tree(
+        {host_pid: ("host", host_pid)}, events
+    )
+    if authorized_processes is None:
+        return False
+    listener_owners = set(listener_pids)
+    return bool(listener_owners) and listener_owners.issubset(
+        {
+            pid
+            for pid, (role, _process_group_id) in authorized_processes.items()
+            if role == "host"
+        }
+    )
+
+
+def _after_teardown_socket_sample_is_clean(
+    sample: Any,
+    *,
+    controller_pid: int,
+    guard_events: Sequence[Mapping[str, Any]],
+    expected_run_id: str,
+) -> bool:
+    """Allow guarded controller residue only when it is not a listener."""
+    from scripts.live_gate_preflight_safety import validate_guard_event_records
+
+    if (
+        not isinstance(sample, Mapping)
+        or sample.get("phase") != "after_teardown"
+        or sample.get("port") != HOST_PORT
+        or sample.get("observed") is not True
+        or sample.get("failure_code") is not None
+        or type(controller_pid) is not int
+        or controller_pid <= 0
+        or not isinstance(expected_run_id, str)
+        or not isinstance(guard_events, Sequence)
+        or isinstance(guard_events, (str, bytes))
+    ):
+        return False
+    socket_pids = sample.get("pids")
+    listener_pids = sample.get("listener_pids")
+    if (
+        not isinstance(socket_pids, list)
+        or any(type(pid) is not int or pid <= 0 for pid in socket_pids)
+        or socket_pids != sorted(set(socket_pids))
+        or not isinstance(listener_pids, list)
+        or any(type(pid) is not int or pid <= 0 for pid in listener_pids)
+        or listener_pids != sorted(set(listener_pids))
+        or listener_pids
+        or not set(socket_pids).issubset({controller_pid})
+    ):
+        return False
+
+    events = list(guard_events)
+    if not validate_guard_event_records(events, expected_run_id=expected_run_id):
+        return False
+    controller_startup = [
+        event
+        for event in events
+        if event.get("event_type") == "guard_startup"
+        and event.get("pid") == controller_pid
+    ]
+    return (
+        len(controller_startup) == 1
+        and controller_startup[0].get("process_role") == "parent"
+    )
+
+
+def _discard_observer_output(evidence: dict[str, Any]) -> None:
+    """Keep aggregate hashes but never persist raw socket or error output."""
+    evidence["stdout_prefix_base64"] = ""
+    evidence["stderr_prefix_base64"] = ""
+
+
+def _make_process_scope(
+    *,
+    selector: str,
+    pid: int,
+    process_group_id: int,
+    process_role: str,
+    launch_source: str,
+    command: Sequence[str],
+    environment_sha256: str,
+    working_directory: str | Path,
+) -> dict[str, Any]:
+    """Build a scope from an independently verified launch or startup identity."""
+    command_sha256 = hashlib.sha256(
+        json.dumps(list(command), ensure_ascii=True, separators=(",", ":")).encode(
+            "ascii"
+        )
+    ).hexdigest()
+    working_directory_sha256 = hashlib.sha256(
+        str(working_directory).encode("utf-8")
+    ).hexdigest()
+    scope = {
+        "selector": selector,
+        "pid": pid,
+        "process_group_id": process_group_id,
+        "process_role": process_role,
+        "launch_source": launch_source,
+        "command_sha256": command_sha256,
+        "environment_sha256": environment_sha256,
+        "working_directory_sha256": working_directory_sha256,
+    }
+    if not _valid_process_scope(scope):
+        raise CharacterizationError("process_scope_identity_invalid")
+    return scope
+
+
+def _valid_process_scope(scope: Any) -> bool:
+    if not isinstance(scope, Mapping) or set(scope) != {
+        "selector",
+        "pid",
+        "process_group_id",
+        "process_role",
+        "launch_source",
+        "command_sha256",
+        "environment_sha256",
+        "working_directory_sha256",
+    }:
+        return False
+    selector = scope.get("selector")
+    pid = scope.get("pid")
+    process_group_id = scope.get("process_group_id")
+    process_role = scope.get("process_role")
+    launch_source = scope.get("launch_source")
+    return bool(
+        selector in ("pid", "process_group")
+        and type(pid) is int
+        and pid > 0
+        and type(process_group_id) is int
+        and process_group_id > 0
+        and process_role in ("parent", "host")
+        and isinstance(launch_source, str)
+        and (
+            (
+                selector == "pid"
+                and process_role == "parent"
+                and launch_source == "controller-startup-canary"
+            )
+            or (
+                selector == "process_group"
+                and process_role == "host"
+                and pid == process_group_id
+                and launch_source
+                in (
+                    "host-prelaunch-canary-session",
+                    "host-worker-start-new-session",
+                )
+            )
+        )
+        and all(
+            isinstance(scope.get(name), str)
+            and _SHA256.fullmatch(scope[name]) is not None
+            for name in (
+                "command_sha256",
+                "environment_sha256",
+                "working_directory_sha256",
+            )
+        )
+    )
+
+
+def _write_socket_sample_evidence(
+    run_directory: Path, phase: str, evidence: Mapping[str, Any]
+) -> None:
+    if phase not in ("before_host", "host_ready", "after_teardown"):
+        raise CharacterizationError("socket_sample_phase_invalid")
+    if run_directory.is_symlink():
+        raise CharacterizationError("socket_sample_evidence_path_invalid")
+    try:
+        resolved_directory = run_directory.resolve(strict=True)
+        resolved_directory.relative_to((PROJECT_ROOT / "tmp").resolve(strict=True))
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise CharacterizationError("socket_sample_evidence_path_invalid") from exc
+    if not resolved_directory.is_dir():
+        raise CharacterizationError("socket_sample_evidence_path_invalid")
+    evidence_path = resolved_directory / ("socket-sample-%s.json" % phase)
+    if evidence_path.exists() or evidence_path.is_symlink():
+        raise CharacterizationError("socket_sample_evidence_already_exists")
+    _write_json(evidence_path, evidence)
+
+
+def _socket_pid_sample(
+    phase: str,
+    *,
+    run_directory: Path,
+    process_scopes: Sequence[Mapping[str, Any]],
+    guard_events: Sequence[Mapping[str, Any]] | None = None,
+    guard_events_complete: bool = True,
+) -> dict[str, Any]:
+    """Census netstat rows after PID filtering, retaining only run-owned rows."""
+    from scripts.live_gate_preflight_safety import validate_guard_event_records
+
+    if phase not in ("before_host", "host_ready", "after_teardown"):
+        raise CharacterizationError("socket_sample_phase_invalid")
+    run_id = run_directory.name
+    evidence: dict[str, Any] = {
+        "schema_version": 3,
+        "run_id": run_id,
+        "phase": phase,
+        "observer": "netstat -anv -W -p tcp and udp; PID filter precedes endpoint parsing",
+        "process_scopes": [],
+        "run_process_pids": [],
+        "guard_startup_pids": [],
+        "protocol_samples": [],
+        "aggregate_counts": {
+            "internet_rows": 0,
+            "unattributed_rows": 0,
+            "pid_zero_rows": 0,
+            "foreign_process_rows": 0,
+            "run_pid_rows": 0,
+            "malformed_run_pid_rows": 0,
+        },
+        "run_owned_rows": [],
+        "pids": [],
+        "observed": False,
+        "failure_code": None,
+    }
+    scopes = list(process_scopes)
+    events = list(guard_events or [])
+    if not scopes:
+        evidence["failure_code"] = "process_scope_identity_missing"
+    elif any(not _valid_process_scope(scope) for scope in scopes):
+        evidence["failure_code"] = "process_scope_identity_invalid"
+    else:
+        evidence["process_scopes"] = [dict(scope) for scope in scopes]
+    if (
+        not events
+        or not guard_events_complete
+        or not validate_guard_event_records(events, expected_run_id=run_id)
+    ):
+        evidence["failure_code"] = "guard_event_evidence_incomplete"
+
+    launch_pids = {
+        int(scope["pid"])
+        for scope in scopes
+        if _valid_process_scope(scope)
+    }
+    event_pids = {
+        int(event["pid"])
+        for event in events
+        if type(event.get("pid")) is int and event.get("pid") > 0
+    }
+    child_process_pids = {
+        int(event["child_pid"])
+        for event in events
+        if event.get("event_type") == "subprocess_started"
+        and type(event.get("child_pid")) is int
+        and event.get("child_pid") > 0
+    }
+    run_pids = launch_pids | event_pids | child_process_pids
+    startup_pids = {
+        int(event["pid"])
+        for event in events
+        if event.get("event_type") == "guard_startup"
+        and type(event.get("pid")) is int
+    }
+    authorized_processes = _authorized_scoped_process_tree(scopes, events)
+    evidence["run_process_pids"] = sorted(run_pids)
+    evidence["guard_startup_pids"] = sorted(startup_pids)
+    if authorized_processes is None:
+        evidence["failure_code"] = "process_scope_guard_identity_invalid"
+
+    rows: list[dict[str, Any]] = []
+    observed = bool(scopes) and evidence["failure_code"] is None
+    commands = (
+        ("tcp", [NETSTAT_EXECUTABLE, "-anv", "-W", "-p", "tcp"]),
+        ("udp", [NETSTAT_EXECUTABLE, "-anv", "-W", "-p", "udp"]),
+    )
+    if observed:
+        for protocol, command in commands:
+            command_evidence, raw_output, command_observed = _run_observer_command(
+                command, max_output_bytes=MAX_NETSTAT_OUTPUT_BYTES
+            )
+            _discard_observer_output(command_evidence)
+            parsed_rows, counts, parseable = _parse_netstat_census(
+                raw_output, run_pids=run_pids
+            )
+            evidence["protocol_samples"].append(
+                {
+                    "protocol": protocol,
+                    "command_evidence": command_evidence,
+                    "counts": counts,
+                    "parseable": parseable,
+                }
+            )
+            for key, count in counts.items():
+                evidence["aggregate_counts"][key] += count
+            if not command_observed:
+                observed = False
+                evidence["failure_code"] = "netstat_observation_incomplete"
+                break
+            if not parseable:
+                observed = False
+                evidence["failure_code"] = "netstat_run_pid_row_malformed"
+                break
+            rows.extend(parsed_rows)
+
+    owners = {int(row["pid"]) for row in rows}
+    evidence["run_owned_rows"] = rows
+    evidence["pids"] = sorted(owners)
+    missing_startup_pids = owners - startup_pids
+    if missing_startup_pids:
+        observed = False
+        evidence["failure_code"] = "socket_owner_missing_guard_startup_event"
+    elif authorized_processes is None or not owners.issubset(authorized_processes):
+        observed = False
+        evidence["failure_code"] = "socket_owner_not_authorized_run_process"
+    for row in rows:
+        foreign = row["foreign"]
+        if _non_loopback_endpoint(foreign) and not _foreign_endpoint_recorded(
+            int(row["pid"]), foreign, events
+        ):
+            observed = False
+            evidence["failure_code"] = "unguarded_non_loopback_socket"
+            break
+    evidence["observed"] = observed
+    if observed:
+        evidence["failure_code"] = None
+    sample_evidence_path = run_directory / ("socket-sample-%s.json" % phase)
+    sample_evidence_relative: str | None = None
+    sample_evidence_sha256: str | None = None
+    try:
+        _write_socket_sample_evidence(run_directory, phase, evidence)
+        sample_evidence_relative = sample_evidence_path.relative_to(
+            PROJECT_ROOT
+        ).as_posix()
+        sample_evidence_sha256 = hashlib.sha256(
+            sample_evidence_path.read_bytes()
+        ).hexdigest()
+    except (CharacterizationError, OSError, ValueError):
+        observed = False
+        evidence["observed"] = False
+        evidence["failure_code"] = "socket_sample_evidence_write_failed"
+    return {
+        "phase": phase,
+        "port": HOST_PORT,
+        "observed": observed,
+        "pids": sorted(owners),
+        "listener_pids": _host_ready_listener_pids(rows),
+        "failure_code": evidence["failure_code"],
+        "evidence_path": sample_evidence_relative,
+        "evidence_sha256": sample_evidence_sha256,
+    }
+
+
+def _make_process_census(
+    *,
+    process_canaries: Sequence[Mapping[str, Any]],
+    process: subprocess.Popen[bytes] | None,
+    driver_exchange: Mapping[str, Any] | None,
+    socket_pid_samples: Sequence[Mapping[str, Any]],
+    process_scopes: Sequence[Mapping[str, Any]],
+    guard_events: Sequence[Mapping[str, Any]],
+    expected_run_id: str,
+) -> dict[str, Any]:
+    from scripts.live_gate_preflight_safety import validate_guard_event_records
+
+    reports = {
+        report.get("canary_stage"): report
+        for report in process_canaries
+        if isinstance(report, Mapping)
+    }
+    controller = reports.get("controller-startup")
+    host_prelaunch = reports.get("host-prelaunch")
+    host_startup = reports.get("host-startup")
+    controller_pid = controller.get("pid") if isinstance(controller, Mapping) else None
+    driver_pid = (
+        driver_exchange.get("process_pid")
+        if isinstance(driver_exchange, Mapping)
+        else None
+    )
+    host_prelaunch_pid = (
+        host_prelaunch.get("pid") if isinstance(host_prelaunch, Mapping) else None
+    )
+    host_worker_pid = process.pid if process is not None else None
+
+    expected_scopes = {
+        "controller-startup-canary": (
+            "pid",
+            controller_pid,
+            "parent",
+        ),
+        "host-prelaunch-canary-session": (
+            "process_group",
+            host_prelaunch_pid,
+            "host",
+        ),
+        "host-worker-start-new-session": (
+            "process_group",
+            host_worker_pid,
+            "host",
+        ),
+    }
+    scopes_by_source = {
+        scope.get("launch_source"): scope
+        for scope in process_scopes
+        if _valid_process_scope(scope)
+    }
+    launch_scopes_complete = (
+        len(process_scopes) == len(expected_scopes)
+        and set(scopes_by_source) == set(expected_scopes)
+        and all(
+            scopes_by_source[source].get("selector") == expected[0]
+            and scopes_by_source[source].get("pid") == expected[1]
+            and scopes_by_source[source].get("process_role") == expected[2]
+            and (
+                expected[0] != "process_group"
+                or scopes_by_source[source].get("process_group_id") == expected[1]
+            )
+            for source, expected in expected_scopes.items()
+        )
+    )
+
+    launched_pids = {
+        pid
+        for pid in (controller_pid, host_prelaunch_pid, host_worker_pid)
+        if type(pid) is int and pid > 0
+    }
+    canary_pids = {
+        report.get("pid")
+        for report in process_canaries
+        if type(report.get("pid")) is int and report.get("pid") > 0
+    }
+    guarded_pids = {
+        int(event["pid"])
+        for event in guard_events
+        if event.get("event_type") == "guard_startup"
+        and type(event.get("pid")) is int
+        and event.get("pid") > 0
+    }
+    child_python_pids = {
+        int(event["child_pid"])
+        for event in guard_events
+        if event.get("event_type") == "subprocess_started"
+        and event.get("child_is_python") is True
+        and type(event.get("child_pid")) is int
+        and event.get("child_pid") > 0
+    }
+    socket_owner_pids = {
+        pid
+        for sample in socket_pid_samples
+        if isinstance(sample, Mapping) and isinstance(sample.get("pids"), list)
+        for pid in sample["pids"]
+        if type(pid) is int and pid > 0
+    }
+    python_pids = launched_pids | child_python_pids | socket_owner_pids | guarded_pids
+    uncovered_pids = python_pids - guarded_pids
+    guard_events_valid = validate_guard_event_records(
+        list(guard_events), expected_run_id=expected_run_id
+    )
+    expected_phases = ("before_host", "host_ready", "after_teardown")
+    samples_complete = (
+        len(socket_pid_samples) == len(expected_phases)
+        and all(
+            isinstance(sample, Mapping)
+            and sample.get("phase") == phase
+            and type(sample.get("port")) is int
+            and sample.get("port") == HOST_PORT
+            and sample.get("observed") is True
+            and sample.get("failure_code") is None
+            and isinstance(sample.get("pids"), list)
+            and all(type(pid) is int and pid > 0 for pid in sample["pids"])
+            and sample["pids"] == sorted(set(sample["pids"]))
+            and isinstance(sample.get("listener_pids"), list)
+            and all(
+                type(pid) is int and pid > 0 for pid in sample["listener_pids"]
+            )
+            and sample["listener_pids"] == sorted(set(sample["listener_pids"]))
+            and set(sample["listener_pids"]).issubset(sample["pids"])
+            for sample, phase in zip(socket_pid_samples, expected_phases)
+        )
+    )
+    sample_pids = {
+        sample.get("phase"): set(sample.get("pids", []))
+        for sample in socket_pid_samples
+        if isinstance(sample, Mapping) and isinstance(sample.get("pids"), list)
+    }
+    startup_records_complete = (
+        isinstance(controller, Mapping)
+        and isinstance(host_prelaunch, Mapping)
+        and isinstance(host_startup, Mapping)
+        and host_worker_pid is not None
+        and host_startup.get("pid") == host_worker_pid
+        and driver_pid == controller_pid
+    )
+    host_ready_sample = next(
+        (
+            sample
+            for sample in socket_pid_samples
+            if isinstance(sample, Mapping) and sample.get("phase") == "host_ready"
+        ),
+        None,
+    )
+    host_ready_listener_valid = _host_ready_listener_is_authorized(
+        host_ready_sample,
+        host_pid=host_worker_pid if type(host_worker_pid) is int else 0,
+        guard_events=guard_events,
+        expected_run_id=expected_run_id,
+    )
+    after_teardown_sample = next(
+        (
+            sample
+            for sample in socket_pid_samples
+            if isinstance(sample, Mapping)
+            and sample.get("phase") == "after_teardown"
+        ),
+        None,
+    )
+    after_teardown_clean = _after_teardown_socket_sample_is_clean(
+        after_teardown_sample,
+        controller_pid=controller_pid if type(controller_pid) is int else 0,
+        guard_events=guard_events,
+        expected_run_id=expected_run_id,
+    )
+    authorized_processes = _authorized_scoped_process_tree(process_scopes, guard_events)
+    samples_by_phase = {
+        sample.get("phase"): sample
+        for sample in socket_pid_samples
+        if isinstance(sample, Mapping)
+    }
+    before_host_sample = samples_by_phase.get("before_host")
+    before_host_listener_pids = (
+        before_host_sample.get("listener_pids")
+        if isinstance(before_host_sample, Mapping)
+        else None
+    )
+    before_host_has_no_listener = (
+        isinstance(before_host_listener_pids, list)
+        and before_host_listener_pids == []
+    )
+    socket_owners_authorized = authorized_processes is not None and all(
+        sample_pids.get(phase, set()).issubset(authorized_processes)
+        for phase in expected_phases
+    )
+    socket_ownership_complete = (
+        before_host_has_no_listener
+        and socket_owners_authorized
+        and bool(host_worker_pid)
+        and host_ready_listener_valid
+        and after_teardown_clean
+    )
+    return {
+        "controller_pid": controller_pid,
+        "driver_pid": driver_pid,
+        "host_prelaunch_pid": host_prelaunch_pid,
+        "host_worker_pid": host_worker_pid,
+        "launched_pids": sorted(launched_pids),
+        "socket_owner_pids": sorted(socket_owner_pids),
+        "python_child_pids": sorted(child_python_pids),
+        "python_pids": sorted(python_pids),
+        "guarded_pids": sorted(guarded_pids),
+        "canary_pids": sorted(canary_pids),
+        "uncovered_pids": sorted(uncovered_pids),
+        "guard_events_valid": guard_events_valid,
+        "socket_pid_samples": [
+            {
+                key: sample.get(key)
+                for key in (
+                    "phase",
+                    "port",
+                    "observed",
+                    "pids",
+                    "listener_pids",
+                    "failure_code",
+                    "evidence_path",
+                    "evidence_sha256",
+                )
+            }
+            for sample in socket_pid_samples
+            if isinstance(sample, Mapping)
+        ],
+        "complete": bool(
+            startup_records_complete
+            and launch_scopes_complete
+            and samples_complete
+            and socket_ownership_complete
+            and guard_events_valid
+            and canary_pids.issubset(guarded_pids)
+            and not uncovered_pids
+        ),
+    }
+
+
+def _wait_until_ready(process: subprocess.Popen[bytes], timeout: float) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            return False
+        listener, observed = _port_state(HOST_PORT)
+        if not observed:
+            return False
+        if listener:
+            return True
+        time.sleep(0.1)
+    return False
+
+
+def _stop_owned_process(process: subprocess.Popen[bytes]) -> bool:
+    if process.poll() is not None:
+        return True
+    try:
+        if os.name == "posix":
+            os.killpg(process.pid, signal.SIGINT)
+        else:
+            process.send_signal(signal.SIGINT)
+        process.wait(timeout=STOP_TIMEOUT_SECONDS)
+    except (OSError, subprocess.TimeoutExpired):
+        try:
+            if process.poll() is None:
+                if os.name == "posix":
+                    os.killpg(process.pid, signal.SIGTERM)
+                else:
+                    process.terminate()
+                process.wait(timeout=5.0)
+        except (OSError, subprocess.TimeoutExpired):
+            try:
+                if process.poll() is None:
+                    if os.name == "posix":
+                        os.killpg(process.pid, signal.SIGKILL)
+                    else:
+                        process.kill()
+                    process.wait(timeout=5.0)
+            except (OSError, subprocess.TimeoutExpired):
+                return False
+    return process.poll() is not None
+
+
+def _host_command(
+    *,
+    fixture_id: str,
+    party_size: int,
+    lifecycle: str,
+    source_sha: str,
+    run_id: str,
+    planned_row_id: str,
+    arm: str,
+    lifecycle_id: str,
+    resume_checkpoint_sha256: str | None,
+    preflight_run_id: str | None = None,
+    create_resume_checkpoint: bool = False,
+    comparison_identity: Mapping[str, Any] | None = None,
+) -> list[str]:
+    if type(create_resume_checkpoint) is not bool or (
+        create_resume_checkpoint
+        and (
+            lifecycle != "startup"
+            or resume_checkpoint_sha256 is not None
+            or fixture_id not in _CHECKPOINT_TRAVEL_STEPS
+        )
+    ):
+        raise CharacterizationError("checkpoint_preparation_identity_invalid")
+    command = [
+        _repository_python(),
+        "-P",
+        "-m",
+        "scripts.live_gate_preflight_profile_runner",
+        "--worker",
+        "--fixture-id",
+        fixture_id,
+        "--party-size",
+        str(party_size),
+        "--lifecycle",
+        lifecycle,
+        "--source-sha",
+        source_sha,
+        "--run-id",
+        run_id,
+        "--planned-row-id",
+        planned_row_id,
+        "--arm",
+        arm,
+        "--lifecycle-id",
+        lifecycle_id,
+    ]
+    if resume_checkpoint_sha256 is not None:
+        command.extend(("--resume-checkpoint-sha256", resume_checkpoint_sha256))
+    if create_resume_checkpoint:
+        command.append("--create-resume-checkpoint")
+    if preflight_run_id is not None:
+        if _SAFE_RUN_ID.fullmatch(preflight_run_id) is None:
+            raise CharacterizationError("row_preflight_identity_invalid")
+        command.extend(("--preflight-run-id", preflight_run_id))
+    if comparison_identity is not None:
+        from scripts.live_gate_preflight_comparison_identity import (
+            validate_comparison_identity,
+        )
+
+        identity = validate_comparison_identity(
+            comparison_identity, expected_application_sha=source_sha
+        )
+        command.extend(
+            (
+                "--comparison-identity-json",
+                json.dumps(
+                    identity,
+                    ensure_ascii=True,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    allow_nan=False,
+                ),
+            )
+        )
+    return command
+
+
+def _make_profile_driver(
+    *, party_size: int, transcript_path: Path, runtime_root: Path
+) -> Any:
+    from scripts.mapping_pilot.row_runner import SocketScriptDriver
+
+    return SocketScriptDriver(
+        party_size=party_size,
+        transcript_path=transcript_path,
+        runtime_root=str(runtime_root),
+    )
+
+
+def _drive_profile_exchange(
+    *,
+    party_size: int,
+    runtime_root: Path,
+    transcript_path: Path,
+    first_turn: Mapping[str, str],
+    driver_factory: Any = None,
+) -> dict[str, Any]:
+    """Start the real capture driver and require one completed scripted exchange."""
+    _require_parent_startup_guard()
+    factory = driver_factory or _make_profile_driver
+    driver: Any = None
+    start_ready = False
+    character_set = False
+    turn_completed = False
+    turn_timed_out = False
+    game_output_count = 0
+    failure_code: str | None = None
+    try:
+        driver = factory(
+            party_size=party_size,
+            transcript_path=transcript_path,
+            runtime_root=runtime_root,
+        )
+        readiness = driver.start()
+        start_ready = isinstance(readiness, Mapping) and readiness.get("ready") is True
+        if not start_ready:
+            failure_code = "capture_driver_start_not_ready"
+        else:
+            character = first_turn.get("character")
+            if not isinstance(character, str) or not character.strip():
+                failure_code = "capture_driver_character_invalid"
+            else:
+                character_set = driver.set_active_character(character) is True
+                if not character_set:
+                    failure_code = "capture_driver_character_selection_failed"
+                else:
+                    turn = driver.send_turn(
+                        first_turn["step_id"],
+                        first_turn["utterance"],
+                        character,
+                    )
+                    if not isinstance(turn, Mapping):
+                        failure_code = "capture_driver_exchange_result_invalid"
+                    else:
+                        turn_completed = turn.get("completed") is True
+                        turn_timed_out = turn.get("timed_out") is True
+                        output_count = turn.get("game_output_count")
+                        if type(output_count) is int and output_count >= 0:
+                            game_output_count = output_count
+                        if not turn_completed or turn_timed_out or game_output_count < 1:
+                            failure_code = "capture_driver_first_exchange_incomplete"
+    except Exception as exc:
+        failure_code = "capture_driver_failed_" + type(exc).__name__
+    finally:
+        if driver is not None:
+            try:
+                driver.close()
+            except Exception as exc:
+                failure_code = failure_code or "capture_driver_teardown_failed_" + type(exc).__name__
+
+    return {
+        "status": "completed" if failure_code is None else "failed",
+        "process_pid": os.getpid(),
+        "step_id": first_turn.get("step_id"),
+        "start_ready": start_ready,
+        "active_character_set": character_set,
+        "turn_completed": turn_completed,
+        "turn_timed_out": turn_timed_out,
+        "game_output_count": game_output_count,
+        "failure_code": failure_code,
+    }
+
+
+def _repository_python() -> str:
+    python_path = PROJECT_ROOT / ".venv" / "bin" / "python"
+    if not python_path.exists() or not python_path.is_file():
+        raise CharacterizationError("repository_venv_missing")
+    return str(python_path)
+
+
+def _make_evidence_sites(calls: list[Any]) -> list[dict[str, Any]]:
+    counts: dict[tuple[str, int, str], int] = {}
+    for call in calls:
+        if not isinstance(call, Mapping):
+            continue
+        source_file = call.get("source_file")
+        source_line = call.get("source_line")
+        source_hash = call.get("source_file_sha256")
+        if (
+            isinstance(source_file, str)
+            and type(source_line) is int
+            and isinstance(source_hash, str)
+            and _SHA256.fullmatch(source_hash)
+        ):
+            key = (source_file, source_line, source_hash)
+            counts[key] = counts.get(key, 0) + 1
+    return [
+        {
+            "source_file": source_file,
+            "source_line": source_line,
+            "source_file_sha256": source_hash,
+            "count": count,
+        }
+        for (source_file, source_line, source_hash), count in sorted(counts.items())
+    ]
+
+
+def _row_preflight_run_directory(run_id: str, preflight_run_id: str) -> Path:
+    if (
+        not isinstance(run_id, str)
+        or _SAFE_RUN_ID.fullmatch(run_id) is None
+        or not isinstance(preflight_run_id, str)
+        or _SAFE_RUN_ID.fullmatch(preflight_run_id) is None
+    ):
+        raise CharacterizationError("row_preflight_identity_invalid")
+    relative = (
+        ROW_PREFLIGHT_EVIDENCE_ROOT
+        / preflight_run_id
+        / "preflight"
+        / "rows"
+        / run_id
+    )
+    cursor = PROJECT_ROOT
+    for part in relative.parts:
+        cursor = cursor / part
+        if cursor.is_symlink():
+            raise CharacterizationError("row_preflight_evidence_path_invalid")
+    try:
+        cursor.resolve(strict=False).relative_to((PROJECT_ROOT / "tmp").resolve(strict=True))
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise CharacterizationError("row_preflight_evidence_path_invalid") from exc
+    return cursor
+
+
+def _worker_result_path(
+    run_id: str, *, preflight_run_id: str | None = None
+) -> Path:
+    if preflight_run_id is not None:
+        return _row_preflight_run_directory(run_id, preflight_run_id) / "worker-result.json"
+    return PROJECT_ROOT / PROFILE_EVIDENCE_ROOT / run_id / "worker-result.json"
+
+
+def _worker_result_path_for_run(
+    run_id: str, preflight_run_id: str | None
+) -> Path:
+    if preflight_run_id is None:
+        return _worker_result_path(run_id)
+    return _worker_result_path(run_id, preflight_run_id=preflight_run_id)
+
+
+def _worker_shutdown_request_path(
+    run_id: str, *, preflight_run_id: str | None = None
+) -> Path:
+    if not isinstance(run_id, str) or _SAFE_RUN_ID.fullmatch(run_id) is None:
+        raise CharacterizationError("worker_shutdown_request_identity_invalid")
+    return _worker_result_path(
+        run_id, preflight_run_id=preflight_run_id
+    ).with_name("shutdown-request.json")
+
+
+def _worker_shutdown_request_path_for_run(
+    run_id: str, preflight_run_id: str | None
+) -> Path:
+    if preflight_run_id is None:
+        return _worker_shutdown_request_path(run_id)
+    return _worker_shutdown_request_path(run_id, preflight_run_id=preflight_run_id)
+
+
+def _worker_shutdown_request_record(
+    *,
+    run_id: str,
+    controller_pid: int,
+    worker_pid: int,
+    process_group_id: int,
+    readiness_succeeded: bool,
+    exchange_succeeded: bool,
+    requested_at_ns: int | None = None,
+) -> dict[str, Any]:
+    if (
+        not isinstance(run_id, str)
+        or _SAFE_RUN_ID.fullmatch(run_id) is None
+        or type(controller_pid) is not int
+        or controller_pid <= 0
+        or type(worker_pid) is not int
+        or worker_pid <= 0
+        or controller_pid == worker_pid
+        or type(process_group_id) is not int
+        or process_group_id != worker_pid
+        or type(readiness_succeeded) is not bool
+        or type(exchange_succeeded) is not bool
+    ):
+        raise CharacterizationError("worker_shutdown_request_identity_invalid")
+    timestamp = time.time_ns() if requested_at_ns is None else requested_at_ns
+    if type(timestamp) is not int or timestamp <= 0:
+        raise CharacterizationError("worker_shutdown_request_timestamp_invalid")
+    return {
+        "schema_version": 1,
+        "run_id": run_id,
+        "controller_pid": controller_pid,
+        "worker_pid": worker_pid,
+        "process_group_id": process_group_id,
+        "signal_number": int(signal.SIGINT),
+        "requested_at_ns": timestamp,
+        "readiness_succeeded": readiness_succeeded,
+        "exchange_succeeded": exchange_succeeded,
+    }
+
+
+def _valid_worker_shutdown_request(
+    value: Any,
+    *,
+    run_id: str,
+    worker_pid: int,
+    process_group_id: int,
+    signal_number: int,
+    signal_received_at_ns: int,
+) -> bool:
+    fields = {
+        "schema_version",
+        "run_id",
+        "controller_pid",
+        "worker_pid",
+        "process_group_id",
+        "signal_number",
+        "requested_at_ns",
+        "readiness_succeeded",
+        "exchange_succeeded",
+    }
+    return (
+        isinstance(value, Mapping)
+        and set(value) == fields
+        and type(value.get("schema_version")) is int
+        and value.get("schema_version") == 1
+        and value.get("run_id") == run_id
+        and type(value.get("controller_pid")) is int
+        and value.get("controller_pid") > 0
+        and value.get("controller_pid") != worker_pid
+        and type(value.get("worker_pid")) is int
+        and value.get("worker_pid") == worker_pid
+        and type(value.get("process_group_id")) is int
+        and value.get("process_group_id") == process_group_id
+        and type(value.get("signal_number")) is int
+        and value.get("signal_number") == signal_number == int(signal.SIGINT)
+        and type(value.get("requested_at_ns")) is int
+        and 0 < value.get("requested_at_ns") <= signal_received_at_ns
+        and type(value.get("readiness_succeeded")) is bool
+        and type(value.get("exchange_succeeded")) is bool
+    )
+
+
+def _write_worker_shutdown_request(
+    process: subprocess.Popen[bytes],
+    *,
+    run_directory: Path,
+    run_id: str,
+    readiness_succeeded: bool,
+    exchange_succeeded: bool,
+) -> dict[str, Any] | None:
+    if process.poll() is not None:
+        return None
+    path = run_directory / "shutdown-request.json"
+    if path.exists() or path.is_symlink():
+        raise CharacterizationError("worker_shutdown_request_already_exists")
+    request = _worker_shutdown_request_record(
+        run_id=run_id,
+        controller_pid=os.getpid(),
+        worker_pid=process.pid,
+        process_group_id=process.pid,
+        readiness_succeeded=readiness_succeeded,
+        exchange_succeeded=exchange_succeeded,
+    )
+    try:
+        _write_json(path, request)
+    except CharacterizationError:
+        raise
+    except Exception as exc:
+        raise CharacterizationError("worker_shutdown_request_write_failed") from exc
+    return request
+
+
+def _ensure_run_directory(
+    run_id: str, *, preflight_run_id: str | None = None
+) -> Path:
+    tmp_root = PROJECT_ROOT / "tmp"
+    if tmp_root.is_symlink() or not tmp_root.is_dir():
+        raise CharacterizationError("project_tmp_unavailable")
+    if (
+        not isinstance(run_id, str)
+        or _SAFE_RUN_ID.fullmatch(run_id) is None
+        or (
+            preflight_run_id is not None
+            and (
+                not isinstance(preflight_run_id, str)
+                or _SAFE_RUN_ID.fullmatch(preflight_run_id) is None
+            )
+        )
+    ):
+        raise CharacterizationError("profile_evidence_identity_invalid")
+    relative = (
+        ROW_PREFLIGHT_EVIDENCE_ROOT / preflight_run_id / "preflight" / "rows" / run_id
+        if preflight_run_id is not None
+        else PROFILE_EVIDENCE_ROOT / run_id
+    )
+    cursor = PROJECT_ROOT
+    for part in relative.parts:
+        cursor = cursor / part
+        if cursor.is_symlink():
+            raise CharacterizationError("profile_evidence_path_invalid")
+    directory = PROJECT_ROOT / relative
+    try:
+        directory.mkdir(mode=0o700, parents=True, exist_ok=False)
+    except FileExistsError as exc:
+        raise CharacterizationError("run_id_already_exists") from exc
+    except OSError as exc:
+        raise CharacterizationError("profile_evidence_directory_unavailable") from exc
+    return directory
+
+
+def _read_guard_events_for_run(
+    run_directory: Path, run_id: str
+) -> tuple[list[dict[str, Any]], bytes, bool]:
+    from scripts.live_gate_preflight_safety import (
+        SafetyConfigurationError,
+        read_guard_event_journal,
+    )
+
+    try:
+        events, raw = read_guard_event_journal(
+            run_directory / "guard-events.jsonl", run_id=run_id
+        )
+    except SafetyConfigurationError:
+        return [], b"", False
+    return events, raw, True
+
+
+def _claim_characterization_attempt(
+    evidence_root: Path,
+    run_directory: Path,
+    attempt_record: Mapping[str, Any],
+) -> None:
+    """Allow at most one measured attempt per fixture-party lifecycle pair."""
+    requested_profile = attempt_record.get("profile_id")
+    requested_lifecycle = attempt_record.get("lifecycle")
+    attempts = 0
+    try:
+        children = list(evidence_root.iterdir())
+    except OSError as exc:
+        raise CharacterizationError("profile_attempt_history_unavailable") from exc
+    for child in children:
+        if child.is_symlink():
+            raise CharacterizationError("profile_attempt_history_unsafe")
+        if not child.is_dir():
+            continue
+        marker = child / "attempt.json"
+        if not marker.exists():
+            continue
+        if marker.is_symlink() or not marker.is_file():
+            raise CharacterizationError("profile_attempt_history_unsafe")
+        prior = _read_json(marker, "profile_attempt")
+        if not isinstance(prior, Mapping):
+            raise CharacterizationError("profile_attempt_history_invalid")
+        attempts += 1
+        if (
+            prior.get("profile_id") == requested_profile
+            and prior.get("lifecycle") == requested_lifecycle
+        ):
+            raise CharacterizationError("profile_lifecycle_already_attempted")
+    if attempts >= MAX_CHARACTERIZATION_ATTEMPTS:
+        raise CharacterizationError("profile_characterization_attempt_limit_reached")
+    if run_directory.parent.resolve(strict=True) != evidence_root.resolve(strict=True):
+        raise CharacterizationError("profile_attempt_directory_invalid")
+    marker_path = run_directory / "attempt.json"
+    if marker_path.exists() or marker_path.is_symlink():
+        raise CharacterizationError("profile_attempt_marker_already_exists")
+    _write_json(marker_path, attempt_record)
+
+
+def _claim_characterization_attempt_if_needed(
+    args: argparse.Namespace,
+    *,
+    evidence_root: Path,
+    run_directory: Path,
+    attempt_record: Mapping[str, Any],
+) -> bool:
+    """Keep row preflight attempts separate from one-shot characterization."""
+    if getattr(args, "preflight_run_id", None) is not None:
+        return False
+    _claim_characterization_attempt(evidence_root, run_directory, attempt_record)
+    return True
+
+
+def _write_json(path: Path, value: Mapping[str, Any]) -> None:
+    from utils.file_operations import safe_write_json
+
+    if not safe_write_json(
+        str(path),
+        dict(value),
+        create_backup=False,
+        acquire_lock=True,
+        json_kwargs={"ensure_ascii": True, "sort_keys": True, "allow_nan": False},
+    ):
+        raise CharacterizationError("profile_evidence_write_failed")
+
+
+def _persist_prelaunch_failure_evidence(
+    run_directory: Path,
+    args: argparse.Namespace,
+    *,
+    failure_code: str,
+    phase: str,
+    command: Sequence[str],
+    runner_command: Sequence[str],
+) -> None:
+    """Retain a bounded failure record before any host process is launched."""
+    root = PROJECT_ROOT.resolve(strict=True)
+    if run_directory.is_symlink():
+        raise CharacterizationError("prelaunch_failure_evidence_path_invalid")
+    resolved_directory = run_directory.resolve(strict=True)
+    try:
+        relative_directory = resolved_directory.relative_to(root)
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise CharacterizationError("prelaunch_failure_evidence_path_invalid") from exc
+    if not relative_directory.parts or relative_directory.parts[0] != "tmp":
+        raise CharacterizationError("prelaunch_failure_evidence_path_invalid")
+    run_id = getattr(args, "run_id", None)
+    if (
+        not isinstance(run_id, str)
+        or _SAFE_RUN_ID.fullmatch(run_id) is None
+        or not resolved_directory.is_dir()
+    ):
+        raise CharacterizationError("prelaunch_failure_evidence_identity_invalid")
+
+    guard_events, guard_events_raw, guard_events_complete = _read_guard_events_for_run(
+        resolved_directory, run_id
+    )
+    guard_path = (relative_directory / "guard-events.jsonl").as_posix()
+    safe_command = list(command) if all(isinstance(part, str) for part in command) else []
+    safe_runner_command = (
+        list(runner_command)
+        if all(isinstance(part, str) for part in runner_command)
+        else []
+    )
+    source_sha = getattr(args, "source_sha", None)
+    if not isinstance(source_sha, str) or _SHA1_OR_SHA256.fullmatch(source_sha) is None:
+        source_sha = None
+
+    report = {
+        "schema_version": 1,
+        "report_type": "profile-characterization-failure",
+        "outcome": "failed",
+        "run_id": run_id,
+        "preflight_run_id": getattr(args, "preflight_run_id", None),
+        "source_sha": source_sha,
+        "fixture_id": getattr(args, "fixture_id", None),
+        "party_size": getattr(args, "party_size", None),
+        "lifecycle": getattr(args, "lifecycle", None),
+        "planned_row_id": getattr(args, "planned_row_id", None),
+        "phase": phase,
+        "failure_code": failure_code,
+        "host_launch_attempted": False,
+        "shared_live_window_lock": {
+            "required": True,
+            "acquired": False,
+            "held_during_host": False,
+            "released": False,
+        },
+        "invocation_identity": {
+            "command_sha256": hashlib.sha256(
+                json.dumps(
+                    safe_command, ensure_ascii=True, separators=(",", ":")
+                ).encode("ascii")
+            ).hexdigest()
+            if safe_command
+            else None,
+            "runner_command_sha256": hashlib.sha256(
+                json.dumps(
+                    safe_runner_command,
+                    ensure_ascii=True,
+                    separators=(",", ":"),
+                ).encode("ascii")
+            ).hexdigest()
+            if safe_runner_command
+            else None,
+            "working_directory": SANDBOX_RELATIVE.as_posix(),
+        },
+        "guard_event_journal": {
+            "path": guard_path,
+            "sha256": (
+                hashlib.sha256(guard_events_raw).hexdigest()
+                if guard_events_complete
+                else None
+            ),
+            "event_count": len(guard_events),
+            "complete": guard_events_complete,
+        },
+    }
+    _write_json(resolved_directory / "failure-evidence.json", report)
+
+
+def _read_worker_result(path: Path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    value = _read_json(path, "worker_result")
+    return dict(value) if isinstance(value, Mapping) else None
+
+
+def _characterize(args: argparse.Namespace) -> tuple[dict[str, Any], str, str]:
+    previous_sys_path = list(sys.path)
+    root = _require_safe_project_root()
+    preflight_run_id = getattr(args, "preflight_run_id", None)
+    root_text = str(root)
+    if root_text not in sys.path:
+        sys.path.insert(0, root_text)
+    config_guard: _SandboxConfigOriginGuard | None = None
+    process_canaries: list[dict[str, Any]] = []
+    process_scopes: list[dict[str, Any]] = []
+    controller_startup: dict[str, Any] = {}
+    guarded_environment: dict[str, str] = {}
+    run_directory: Path | None = None
+    create_resume_checkpoint = getattr(args, "create_resume_checkpoint", False)
+    if type(create_resume_checkpoint) is not bool:
+        raise CharacterizationError("checkpoint_request_invalid")
+    checkpoint_before_sha256: str | None = None
+    checkpoint_initial_location_id: str | None = None
+    checkpoint_initial_time: str | None = None
+    checkpoint_travel_turn: dict[str, Any] | None = None
+    checkpoint_attestation: dict[str, Any] | None = None
+    checkpoint_directory: Path | None = None
+    checkpoint_descriptor: dict[str, Any] | None = None
+    runner_command: list[str] = []
+    command: list[str] = []
+    phase = "parent_startup_guard"
+    try:
+        _require_parent_startup_guard()
+        phase = "run_identity"
+        if args.run_id is None:
+            args.run_id = "pf-" + uuid.uuid4().hex[:24]
+        if not isinstance(args.run_id, str) or _SAFE_RUN_ID.fullmatch(args.run_id) is None:
+            raise CharacterizationError("run_id_invalid")
+        sandbox = root / SANDBOX_RELATIVE
+        _configure_sandbox_import_paths(root, sandbox)
+        config_guard = _install_sandbox_config_guard(sandbox)
+        phase = "source_identity"
+        _verify_bound_source_identity(
+            args.source_sha, getattr(args, "comparison_identity_json", None)
+        )
+        phase = "prepared_sandbox_validation"
+        (
+            sandbox,
+            planned_row_id,
+            arm,
+            profile_id,
+            first_turn,
+            sandbox_provider_key_placeholder,
+        ) = _validate_prepared_sandbox(
+            fixture_id=args.fixture_id,
+            party_size=args.party_size,
+            lifecycle=args.lifecycle,
+            resume_checkpoint_sha256=args.resume_checkpoint_sha256,
+            checkpoint_travel=create_resume_checkpoint,
+        )
+        if create_resume_checkpoint:
+            from scripts.mapping_pilot import launcher
+
+            checkpoint_tracker = _read_json(
+                sandbox / "party_tracker.json", "checkpoint_initial_party_tracker"
+            )
+            checkpoint_world = (
+                checkpoint_tracker.get("worldConditions")
+                if isinstance(checkpoint_tracker, Mapping)
+                else None
+            )
+            checkpoint_initial_location_id = (
+                checkpoint_world.get("currentLocationId")
+                if isinstance(checkpoint_world, Mapping)
+                else None
+            )
+            checkpoint_initial_time = (
+                checkpoint_world.get("time")
+                if isinstance(checkpoint_world, Mapping)
+                else None
+            )
+            if not isinstance(checkpoint_initial_time, str):
+                raise CharacterizationError("checkpoint_seed_location_mismatch")
+            _validate_checkpoint_seed_location(
+                checkpoint_initial_location_id, first_turn
+            )
+            checkpoint_travel_turn = dict(first_turn)
+            try:
+                checkpoint_before_sha256 = launcher._canonical_state_sha256(sandbox)
+            except Exception as exc:
+                raise CharacterizationError("checkpoint_initial_state_hash_unavailable") from exc
+        if preflight_run_id is not None and (
+            args.planned_row_id != planned_row_id or args.arm != arm
+        ):
+            raise CharacterizationError("row_preflight_sandbox_identity_mismatch")
+        run_directory = _ensure_run_directory(
+            args.run_id, preflight_run_id=preflight_run_id
+        )
+        guard_events_path = run_directory / "guard-events.jsonl"
+        child_evidence_path = run_directory / "adv-summary-child.jsonl"
+        from scripts.live_gate_preflight_safety import configure_guard_event_sink
+
+        configure_guard_event_sink(guard_events_path, run_id=args.run_id)
+        lifecycle_id = args.run_id + ("_s" if args.lifecycle == "startup" else "_r")
+        phase = "host_command_identity"
+        command = _host_command(
+            fixture_id=args.fixture_id,
+            party_size=args.party_size,
+            lifecycle=args.lifecycle,
+            source_sha=args.source_sha,
+            run_id=args.run_id,
+            planned_row_id=planned_row_id,
+            arm=arm,
+            lifecycle_id=lifecycle_id,
+            resume_checkpoint_sha256=args.resume_checkpoint_sha256,
+            preflight_run_id=preflight_run_id,
+            create_resume_checkpoint=create_resume_checkpoint,
+            comparison_identity=getattr(args, "comparison_identity_json", None),
+        )
+        from scripts.live_gate_preflight_safety import (
+            CANARY_REPORT_ENV,
+            _startup_canary_environment_digest,
+            _startup_environment_digest,
+            _startup_environment_snapshot,
+            build_guarded_sandbox_environment,
+            current_invocation_command,
+            run_startup_process_canary,
+        )
+
+        actual_runner_command = current_invocation_command()
+        from scripts.live_gate_preflight_stub import _redact_command
+
+        runner_command = _redact_command(actual_runner_command)
+        if runner_command != actual_runner_command:
+            raise CharacterizationError("runner_command_contains_sensitive_argument")
+
+        guarded_environment = build_guarded_sandbox_environment(
+            SANDBOX_RELATIVE,
+            project_root=root,
+            source_environment=os.environ,
+            process_role="host",
+            run_id=args.run_id,
+            guard_events_path=guard_events_path,
+        )
+        host_environment_sha256 = _startup_canary_environment_digest(
+            guarded_environment
+        )
+        expected_pythonpath = os.pathsep.join(
+            (
+                str(root / "scripts" / "live_gate_preflight_guard"),
+                str(root),
+            )
+        )
+        if guarded_environment.get("PYTHONPATH") != expected_pythonpath:
+            raise CharacterizationError("pythonpath_identity_invalid")
+        try:
+            controller_report = json.loads(os.environ[CANARY_REPORT_ENV])
+        except (KeyError, json.JSONDecodeError) as exc:
+            raise CharacterizationError("startup_canary_report_invalid") from exc
+        controller_startup = _validate_startup_canary_record(
+            controller_report,
+            process_role="parent",
+            command=runner_command,
+            cwd=Path.cwd(),
+            environment_sha256=_startup_environment_digest(
+                _startup_environment_snapshot()
+            ),
+            expected_pid=os.getpid(),
+        )
+        phase = "host_prelaunch_canary"
+        try:
+            host_prelaunch = run_startup_process_canary(
+                command=command,
+                cwd=sandbox,
+                env=guarded_environment,
+            )
+        except Exception as exc:
+            raise CharacterizationError("host_prelaunch_canary_failed") from exc
+        host_prelaunch = _validate_startup_canary_record(
+            host_prelaunch,
+            process_role="host",
+            command=command,
+            cwd=sandbox,
+            environment_sha256=host_environment_sha256,
+        )
+        process_canaries = [
+            {"canary_stage": "controller-startup", **controller_startup},
+            {"canary_stage": "host-prelaunch", **host_prelaunch},
+        ]
+        process_scopes = [
+            _make_process_scope(
+                selector="pid",
+                pid=os.getpid(),
+                process_group_id=os.getpgrp(),
+                process_role="parent",
+                launch_source="controller-startup-canary",
+                command=controller_startup["command"],
+                environment_sha256=controller_startup["environment_sha256"],
+                working_directory=controller_startup["working_directory"],
+            ),
+            _make_process_scope(
+                selector="process_group",
+                pid=host_prelaunch["pid"],
+                process_group_id=host_prelaunch["pid"],
+                process_role="host",
+                launch_source="host-prelaunch-canary-session",
+                command=host_prelaunch["command"],
+                environment_sha256=host_prelaunch["environment_sha256"],
+                working_directory=host_prelaunch["working_directory"],
+            ),
+        ]
+
+        phase = "shared_live_window_lock_acquire"
+        common_directory = _git_common_directory()
+        lock_record = _build_live_window_lock_record(
+            run_id=args.run_id,
+            fixture_id=args.fixture_id,
+            party_size=args.party_size,
+            lifecycle=args.lifecycle,
+            planned_row_id=planned_row_id,
+            source_sha=args.source_sha,
+        )
+        lock = _ProfileCharacterizationLock(common_directory, lock_record)
+        if not lock.acquire():
+            raise CharacterizationError("shared_live_window_lock_unavailable")
+    except BaseException as exc:
+        try:
+            if run_directory is not None:
+                failure_code = (
+                    exc.code
+                    if isinstance(exc, CharacterizationError)
+                    else "prelaunch_failed_" + type(exc).__name__
+                )
+                _persist_prelaunch_failure_evidence(
+                    run_directory,
+                    args,
+                    failure_code=failure_code,
+                    phase=phase,
+                    command=command,
+                    runner_command=runner_command,
+                )
+        finally:
+            _remove_import_guard(config_guard)
+            sys.path[:] = previous_sys_path
+        raise
+
+    process: subprocess.Popen[bytes] | None = None
+    server_stopped = True
+    port_free = False
+    port_status = {port: False for port in REQUIRED_PORTS}
+    lock_released = False
+    ready = False
+    driver_exchange: dict[str, Any] | None = None
+    result: dict[str, Any] | None = None
+    failure_code: str | None = None
+    evidence: dict[str, Any] | None = None
+    guard_events: list[dict[str, Any]] = []
+    guard_events_raw = b""
+    guard_events_complete = False
+    host_startup: dict[str, Any] | None = None
+    socket_pid_samples: list[dict[str, Any]] = []
+    process_census: dict[str, Any] | None = None
+    shutdown_request: dict[str, Any] | None = None
+    teardown_port_observations: dict[int, Any] = {}
+    teardown_wait_evidence: dict[str, Any] | None = None
+    checkpoint_travel_proof: dict[str, Any] | None = None
+    after_teardown_sample: Mapping[str, Any] | None = None
+    after_teardown_sample_complete = False
+    after_teardown_sample_observed_monotonic_ns: int | None = None
+    adv_summary_child_evidence: dict[str, Any] | None = None
+    summary_child_artifacts: dict[str, Any] | None = None
+    summary_child_retention: dict[str, Any] | None = None
+
+    def release_live_window_lock() -> bool:
+        final_census = (
+            teardown_wait_evidence.get("final_process_census")
+            if isinstance(teardown_wait_evidence, Mapping)
+            else None
+        )
+        final_attempt = (
+            teardown_wait_evidence.get("final")
+            if isinstance(teardown_wait_evidence, Mapping)
+            else None
+        )
+        wait_attempts = (
+            teardown_wait_evidence.get("attempts")
+            if isinstance(teardown_wait_evidence, Mapping)
+            else None
+        )
+        final_listener_census = (
+            final_attempt.get("listener_census")
+            if isinstance(final_attempt, Mapping)
+            else None
+        )
+        final_bind_observations = (
+            final_attempt.get("port_observations")
+            if isinstance(final_attempt, Mapping)
+            else None
+        )
+        if (
+            not server_stopped
+            or not port_free
+            or not after_teardown_sample_complete
+            or not isinstance(after_teardown_sample, Mapping)
+            or not isinstance(teardown_wait_evidence, Mapping)
+            or teardown_wait_evidence.get("schema_version") != 1
+            or teardown_wait_evidence.get("lock_held") is not True
+            or teardown_wait_evidence.get("status") != "ports_free"
+            or teardown_wait_evidence.get("failure_code") is not None
+            or type(teardown_wait_evidence.get("started_monotonic_ns")) is not int
+            or type(teardown_wait_evidence.get("completed_monotonic_ns")) is not int
+            or type(teardown_wait_evidence.get("elapsed_monotonic_ns")) is not int
+            or teardown_wait_evidence["elapsed_monotonic_ns"]
+            != teardown_wait_evidence["completed_monotonic_ns"]
+            - teardown_wait_evidence["started_monotonic_ns"]
+            or not 0
+            <= teardown_wait_evidence["elapsed_monotonic_ns"]
+            <= TEARDOWN_PORT_WAIT_TIMEOUT_NS
+            or not isinstance(wait_attempts, list)
+            or not wait_attempts
+            or not isinstance(final_attempt, Mapping)
+            or final_attempt != wait_attempts[-1]
+            or not isinstance(final_listener_census, Mapping)
+            or set(final_listener_census) != {str(port) for port in REQUIRED_PORTS}
+            or not isinstance(final_bind_observations, Mapping)
+            or set(final_bind_observations) != {str(port) for port in REQUIRED_PORTS}
+            or any(
+                not _listener_census_observation_is_valid(
+                    final_listener_census[str(port)], port
+                )
+                or final_listener_census[str(port)].get("observed") is not True
+                or final_listener_census[str(port)].get("listener_pids") != []
+                or _teardown_port_observation_kind(
+                    final_bind_observations[str(port)], port
+                )
+                != "free"
+                for port in REQUIRED_PORTS
+            )
+            or not isinstance(final_census, Mapping)
+            or final_census.get("observed") is not True
+            or final_census.get("listener_pids") != []
+            or final_census.get("path") != after_teardown_sample.get("evidence_path")
+            or final_census.get("sha256")
+            != after_teardown_sample.get("evidence_sha256")
+            or type(final_census.get("observed_monotonic_ns")) is not int
+            or final_census.get("observed_monotonic_ns")
+            != after_teardown_sample_observed_monotonic_ns
+            or type(teardown_wait_evidence.get("completed_monotonic_ns")) is not int
+            or final_census["observed_monotonic_ns"]
+            <= teardown_wait_evidence["completed_monotonic_ns"]
+        ):
+            return False
+        evidence_path = (
+            (run_directory / "profile-evidence.json").relative_to(root).as_posix()
+            if run_directory is not None
+            else ""
+        )
+        teardown_evidence_path = (
+            (run_directory / "teardown-evidence.json").relative_to(root).as_posix()
+            if run_directory is not None
+            else ""
+        )
+        try:
+            wait_sha256 = _canonical_json_sha256(teardown_wait_evidence)
+            return lock.release(
+                {
+                    **lock_record,
+                    "event": "released",
+                    "released_at_utc": _format_utc_timestamp(
+                        datetime.now(timezone.utc)
+                    ),
+                    "server_stopped": True,
+                    "ports_free": {
+                        str(port): port_status[port] for port in REQUIRED_PORTS
+                    },
+                    "after_teardown_socket_sample_observed": True,
+                    "after_teardown_socket_pids": after_teardown_sample.get("pids"),
+                    "after_teardown_socket_sample_path": after_teardown_sample.get(
+                        "evidence_path"
+                    ),
+                    "after_teardown_socket_sample_sha256": after_teardown_sample.get(
+                        "evidence_sha256"
+                    ),
+                    "after_teardown_socket_sample_observed_monotonic_ns": (
+                        after_teardown_sample_observed_monotonic_ns
+                    ),
+                    "evidence_path": evidence_path,
+                    "teardown_evidence_schema_version": 2,
+                    "teardown_evidence_path": teardown_evidence_path,
+                    "teardown_wait_schema_version": 1,
+                    "teardown_wait_sha256": wait_sha256,
+                    "teardown_wait_elapsed_monotonic_ns": (
+                        teardown_wait_evidence.get("elapsed_monotonic_ns")
+                    ),
+                    "teardown_wait_completed_monotonic_ns": (
+                        teardown_wait_evidence.get("completed_monotonic_ns")
+                    ),
+                }
+            )
+        except Exception:
+            return False
+
+    try:
+        if run_directory is None:
+            raise CharacterizationError("profile_evidence_directory_unavailable")
+        guard_events, _journal_bytes, journal_complete = _read_guard_events_for_run(
+            run_directory, args.run_id
+        )
+        pre_host_sample = _socket_pid_sample(
+            "before_host",
+            run_directory=run_directory,
+            process_scopes=process_scopes,
+            guard_events=guard_events,
+            guard_events_complete=journal_complete,
+        )
+        socket_pid_samples.append(pre_host_sample)
+        port_status = _required_port_status()
+        before_start_failure = _port_failure_code(port_status, "before_start")
+        if before_start_failure is not None:
+            raise CharacterizationError(before_start_failure)
+        if (
+            not pre_host_sample["observed"]
+            or not isinstance(pre_host_sample.get("listener_pids"), list)
+            or pre_host_sample["listener_pids"]
+        ):
+            raise CharacterizationError("process_census_before_host_invalid")
+        from scripts.live_gate_preflight_safety import (
+            authorize_subprocess_launch,
+        )
+        if any(
+            report.get("guard_active") is not True
+            or report.get("non_loopback_connect_denied") is not True
+            or report.get("subprocess_launch_denied") is not True
+            for report in process_canaries
+        ):
+            raise CharacterizationError("startup_canary_failed_closed")
+        _claim_characterization_attempt_if_needed(
+            args,
+            evidence_root=run_directory.parent,
+            run_directory=run_directory,
+            attempt_record={
+                "schema_version": 1,
+                "run_id": args.run_id,
+                "profile_id": profile_id,
+                "fixture_id": args.fixture_id,
+                "party_size": args.party_size,
+                "lifecycle": args.lifecycle,
+                "planned_row_id": planned_row_id,
+                "source_sha": args.source_sha,
+                "attempted_at_utc": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+        if os.name != "posix":
+            raise CharacterizationError("process_group_identity_unavailable")
+        with authorize_subprocess_launch(
+            command, cwd=sandbox, env=guarded_environment
+        ):
+            process = subprocess.Popen(
+                command,
+                cwd=sandbox,
+                env=guarded_environment,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        process_scopes.append(
+            _make_process_scope(
+                selector="process_group",
+                pid=process.pid,
+                process_group_id=process.pid,
+                process_role="host",
+                launch_source="host-worker-start-new-session",
+                command=command,
+                environment_sha256=host_environment_sha256,
+                working_directory=sandbox,
+            )
+        )
+        ready = _wait_until_ready(process, STARTUP_TIMEOUT_SECONDS)
+        guard_events, _journal_bytes, guard_events_complete = _read_guard_events_for_run(
+            run_directory, args.run_id
+        )
+        ready_sample = _socket_pid_sample(
+            "host_ready",
+            run_directory=run_directory,
+            process_scopes=process_scopes,
+            guard_events=guard_events,
+            guard_events_complete=guard_events_complete,
+        )
+        socket_pid_samples.append(ready_sample)
+        if not isinstance(ready_sample, Mapping) or ready_sample.get("observed") is not True or (
+            ready
+            and not _host_ready_listener_is_authorized(
+                ready_sample,
+                host_pid=process.pid,
+                guard_events=guard_events,
+                expected_run_id=args.run_id,
+            )
+        ):
+            failure_code = "process_census_host_owner_invalid"
+        if not ready:
+            failure_code = failure_code or "host_startup_not_ready"
+        if failure_code is None:
+            driver_exchange = _drive_profile_exchange(
+                party_size=args.party_size,
+                runtime_root=sandbox,
+                transcript_path=run_directory / "driver-transcript.txt",
+                first_turn=first_turn,
+            )
+            if driver_exchange.get("status") != "completed":
+                failure_code = str(
+                    driver_exchange.get("failure_code")
+                    or "capture_driver_first_exchange_incomplete"
+                )
+        try:
+            shutdown_request = _write_worker_shutdown_request(
+                process,
+                run_directory=run_directory,
+                run_id=args.run_id,
+                readiness_succeeded=ready,
+                exchange_succeeded=(
+                    isinstance(driver_exchange, Mapping)
+                    and driver_exchange.get("status") == "completed"
+                ),
+            )
+        except CharacterizationError as exc:
+            failure_code = failure_code or exc.code
+        if not _stop_owned_process(process):
+            server_stopped = False
+            failure_code = failure_code or "host_server_stop_failed"
+        else:
+            server_stopped = process.poll() is not None
+        result = _read_worker_result(
+            _worker_result_path_for_run(args.run_id, preflight_run_id)
+        )
+        if result is None:
+            failure_code = failure_code or "host_worker_result_missing"
+        elif (
+            result.get("run_id") != args.run_id
+            or result.get("source_sha") != args.source_sha
+            or result.get("command") != command
+            or result.get("pythonpath") != expected_pythonpath
+        ):
+            failure_code = failure_code or "host_worker_identity_mismatch"
+        elif result.get("interpreter") != _interpreter_identity():
+            failure_code = failure_code or "host_interpreter_identity_mismatch"
+        elif result.get("guard_active") is not True:
+            failure_code = failure_code or "host_network_guard_inactive"
+        elif result.get("startup_guard_from_sitecustomize") is not True:
+            failure_code = failure_code or "host_startup_guard_not_initialized"
+        elif result.get("sandbox_config_origin_guard_active") is not True:
+            failure_code = failure_code or "sandbox_config_origin_guard_inactive"
+        elif result.get("provider_environment_keys_blank") is not True:
+            failure_code = failure_code or "provider_keys_not_blank"
+        elif (
+            result.get("sandbox_provider_key_placeholder")
+            != sandbox_provider_key_placeholder
+        ):
+            failure_code = failure_code or "sandbox_provider_key_placeholder_invalid"
+        elif result.get("proxy_values_blank") is not True:
+            failure_code = failure_code or "proxy_values_not_blank"
+        elif result.get("real_project_config_loaded") is not False:
+            failure_code = failure_code or "real_project_config_loaded"
+        elif result.get("sandbox_config_loaded") is not True:
+            failure_code = failure_code or "sandbox_config_identity_invalid"
+        elif (
+            type(result.get("server_returned")) is not bool
+            or result.get("interrupted") is not True
+            or result.get("graceful_shutdown_requested") is not True
+        ):
+            failure_code = failure_code or str(
+                result.get("failure_code") or "host_shutdown_not_attributed"
+            )
+        elif (
+            shutdown_request is None
+            or result.get("shutdown_request") != shutdown_request
+        ):
+            failure_code = failure_code or "host_shutdown_request_identity_mismatch"
+        elif (
+            type(result.get("shutdown_signal_received_at_ns")) is not int
+            or result["shutdown_signal_received_at_ns"]
+            < shutdown_request.get("requested_at_ns", 0)
+        ):
+            failure_code = failure_code or "host_shutdown_signal_evidence_invalid"
+        elif (
+            shutdown_request.get("readiness_succeeded") is not True
+            or shutdown_request.get("exchange_succeeded") is not True
+        ):
+            failure_code = failure_code or "host_shutdown_prerequisites_not_met"
+        elif result.get("outcome") != "completed":
+            failure_code = failure_code or str(result.get("failure_code") or "host_lifecycle_failed")
+        elif type(result.get("call_count")) is not int or not isinstance(
+            result.get("calls"), list
+        ) or result.get("call_count") != len(result["calls"]):
+            failure_code = failure_code or "router_call_log_incomplete"
+        elif result.get("call_count") < 1:
+            failure_code = failure_code or "router_call_missing"
+        elif result.get("stub_failure_code") is not None:
+            failure_code = failure_code or "router_stub_rejected_call"
+        elif driver_exchange is None or driver_exchange.get("status") != "completed":
+            failure_code = failure_code or "capture_driver_first_exchange_incomplete"
+        if isinstance(result, Mapping):
+            if create_resume_checkpoint and failure_code is None:
+                try:
+                    if not isinstance(checkpoint_travel_turn, Mapping):
+                        raise CharacterizationError("checkpoint_travel_turn_missing")
+                    checkpoint_travel_proof = _validate_checkpoint_travel_exchange(
+                        result,
+                        travel_turn=checkpoint_travel_turn,
+                        driver_exchange=driver_exchange,
+                    )
+                except CharacterizationError as exc:
+                    failure_code = failure_code or exc.code
+            try:
+                worker_canary = json.loads(result.get("startup_canary_report", ""))
+            except (TypeError, json.JSONDecodeError):
+                worker_canary = None
+            if process is None or not isinstance(worker_canary, Mapping):
+                failure_code = failure_code or "host_startup_canary_report_invalid"
+            else:
+                try:
+                    host_startup = _validate_startup_canary_record(
+                        worker_canary,
+                        process_role="host",
+                        command=command,
+                        cwd=sandbox,
+                        environment_sha256=host_environment_sha256,
+                        expected_pid=process.pid,
+                    )
+                except CharacterizationError:
+                    failure_code = failure_code or "host_startup_canary_report_invalid"
+                else:
+                    if (
+                        host_startup.get("interpreter") != result.get("interpreter")
+                        or host_startup.get("environment_sha256")
+                        != host_environment_sha256
+                    ):
+                        failure_code = failure_code or "host_startup_canary_report_invalid"
+                    else:
+                        process_canaries.append(
+                            {"canary_stage": "host-startup", **host_startup}
+                        )
+            # Retained summary-child artifacts are copied from the shared
+            # sandbox while the live-window lock is still held. Waiting
+            # until after the lock release below would let a concurrent
+            # preflight row mutate tmp/combat_capture before these reads
+            # complete, producing spurious content-mismatch failures.
+            summary_child = result.get("adv_summary_child")
+            summary_child_launch_count = (
+                summary_child.get("launch_count")
+                if isinstance(summary_child, Mapping)
+                else None
+            )
+            if (
+                isinstance(summary_child, Mapping)
+                and run_directory is not None
+                and isinstance(summary_child_launch_count, int)
+                and summary_child_launch_count > 0
+            ):
+                from scripts.live_gate_preflight_retained import (
+                    RetainedEvidenceError,
+                    retain_summary_child_artifacts,
+                )
+
+                try:
+                    summary_child_artifacts = retain_summary_child_artifacts(
+                        sandbox,
+                        run_directory,
+                        run_id=args.run_id,
+                        summary_child=summary_child,
+                    )
+                except RetainedEvidenceError as exc:
+                    # Record the retention failure as its own evidence object
+                    # even when an earlier failure_code already won the race,
+                    # so it is never silently masked.
+                    failure_code = failure_code or "summary_child_artifact_retention_failed"
+                    summary_child_retention = {
+                        "succeeded": False,
+                        "failure_code": str(exc),
+                        "partial_artifact_count": len(
+                            getattr(exc, "retained_artifacts", []) or []
+                        ),
+                    }
+                else:
+                    summary_child_retention = {
+                        "succeeded": True,
+                        "failure_code": None,
+                        "partial_artifact_count": len(
+                            summary_child_artifacts.get("artifacts", [])
+                            if isinstance(summary_child_artifacts, Mapping)
+                            else []
+                        ),
+                    }
+        if not ready:
+            failure_code = failure_code or "host_startup_not_ready"
+    except CharacterizationError as exc:
+        failure_code = failure_code or exc.code
+    except Exception as exc:
+        failure_code = failure_code or "characterization_failed_" + type(exc).__name__
+    finally:
+        if process is not None and process.poll() is None:
+            if shutdown_request is None and run_directory is not None:
+                try:
+                    shutdown_request = _write_worker_shutdown_request(
+                        process,
+                        run_directory=run_directory,
+                        run_id=args.run_id,
+                        readiness_succeeded=ready,
+                        exchange_succeeded=(
+                            isinstance(driver_exchange, Mapping)
+                            and driver_exchange.get("status") == "completed"
+                        ),
+                    )
+                except CharacterizationError as exc:
+                    failure_code = failure_code or exc.code
+            if not _stop_owned_process(process):
+                server_stopped = False
+                failure_code = failure_code or "host_server_stop_failed"
+            else:
+                server_stopped = process.poll() is not None
+        lock_held = bool(
+            getattr(lock, "acquired", False) is True
+            or getattr(lock, "held", False) is True
+        )
+        try:
+            teardown_wait_evidence = _wait_for_teardown_ports(
+                lock_held=lock_held,
+                monotonic_ns=time.monotonic_ns,
+                sleeper=time.sleep,
+            )
+        except Exception as exc:
+            teardown_wait_evidence = _failed_teardown_wait_evidence(
+                lock_held=lock_held,
+                failure_code="teardown_port_wait_failed_" + type(exc).__name__,
+            )
+        final_attempt = teardown_wait_evidence.get("final")
+        final_bind_observations = (
+            final_attempt.get("port_observations")
+            if isinstance(final_attempt, Mapping)
+            else None
+        )
+        if not isinstance(final_bind_observations, Mapping):
+            final_bind_observations = {}
+        teardown_port_observations = {
+            port: final_bind_observations.get(str(port))
+            for port in REQUIRED_PORTS
+        }
+        port_status = {
+            port: _teardown_port_observation_kind(
+                teardown_port_observations.get(port), port
+            )
+            == "free"
+            for port in REQUIRED_PORTS
+        }
+        port_free = _ports_are_free(port_status)
+        if teardown_wait_evidence.get("failure_code") is not None:
+            failure_code = failure_code or str(
+                teardown_wait_evidence["failure_code"]
+            )
+        if run_directory is None:
+            failure_code = failure_code or "socket_sample_evidence_directory_unavailable"
+        else:
+            try:
+                guard_events, _journal_bytes, journal_complete = (
+                    _read_guard_events_for_run(run_directory, args.run_id)
+                )
+                after_teardown_observation = _socket_pid_sample(
+                    "after_teardown",
+                    run_directory=run_directory,
+                    process_scopes=process_scopes,
+                    guard_events=guard_events,
+                    guard_events_complete=journal_complete,
+                )
+            except Exception as exc:
+                census_failure = (
+                    "process_census_after_teardown_failed_" + type(exc).__name__
+                )
+                failure_code = failure_code or census_failure
+                after_teardown_observation = {
+                    "phase": "after_teardown",
+                    "port": HOST_PORT,
+                    "observed": False,
+                    "pids": [],
+                    "listener_pids": [],
+                    "failure_code": census_failure,
+                }
+            socket_pid_samples.append(after_teardown_observation)
+        after_teardown_sample = (
+            socket_pid_samples[-1]
+            if socket_pid_samples
+            and socket_pid_samples[-1].get("phase") == "after_teardown"
+            else None
+        )
+        try:
+            after_teardown_sample_observed_monotonic_ns = time.monotonic_ns()
+        except Exception:
+            after_teardown_sample_observed_monotonic_ns = 0
+            failure_code = failure_code or "process_census_monotonic_time_unavailable"
+        teardown_wait_evidence["final_process_census"] = {
+            "phase": "after_teardown",
+            "path": (
+                after_teardown_sample.get("evidence_path")
+                if isinstance(after_teardown_sample, Mapping)
+                else None
+            ),
+            "sha256": (
+                after_teardown_sample.get("evidence_sha256")
+                if isinstance(after_teardown_sample, Mapping)
+                else None
+            ),
+            "observed": (
+                after_teardown_sample.get("observed") is True
+                if isinstance(after_teardown_sample, Mapping)
+                else False
+            ),
+            "listener_pids": (
+                after_teardown_sample.get("listener_pids")
+                if isinstance(after_teardown_sample, Mapping)
+                else None
+            ),
+            "observed_monotonic_ns": after_teardown_sample_observed_monotonic_ns,
+        }
+        controller_report = next(
+            (
+                report
+                for report in process_canaries
+                if isinstance(report, Mapping)
+                and report.get("canary_stage") == "controller-startup"
+            ),
+            {},
+        )
+        after_teardown_sample_complete = _after_teardown_socket_sample_is_clean(
+            after_teardown_sample,
+            controller_pid=(
+                controller_report.get("pid")
+                if type(controller_report.get("pid")) is int
+                else 0
+            ),
+            guard_events=guard_events,
+            expected_run_id=args.run_id,
+        )
+        if not server_stopped or not port_free:
+            failure_code = failure_code or "host_teardown_unverified"
+        if not after_teardown_sample_complete:
+            failure_code = failure_code or "process_census_after_teardown_invalid"
+        if not create_resume_checkpoint:
+            lock_released = release_live_window_lock()
+            if not lock_released:
+                failure_code = failure_code or "shared_live_window_lock_release_failed"
+        _remove_import_guard(config_guard)
+        sys.path[:] = previous_sys_path
+
+    if run_directory is not None:
+        guard_events, guard_events_raw, guard_events_complete = _read_guard_events_for_run(
+            run_directory, args.run_id
+        )
+    if not guard_events_complete:
+        failure_code = failure_code or "guard_event_journal_incomplete"
+
+    process_census = _make_process_census(
+        process_canaries=process_canaries,
+        process=process,
+        driver_exchange=driver_exchange,
+        socket_pid_samples=socket_pid_samples,
+        process_scopes=process_scopes,
+        guard_events=guard_events,
+        expected_run_id=args.run_id,
+    )
+    if not process_census["complete"]:
+        failure_code = failure_code or "process_census_incomplete"
+    if create_resume_checkpoint:
+        if (
+            failure_code is not None
+            or not isinstance(checkpoint_travel_turn, Mapping)
+            or not isinstance(checkpoint_travel_proof, Mapping)
+            or checkpoint_before_sha256 is None
+            or checkpoint_initial_time is None
+        ):
+            failure_code = failure_code or "checkpoint_creation_prerequisites_missing"
+        else:
+            try:
+                checkpoint_descriptor, checkpoint_attestation = (
+                    _retain_moved_resume_checkpoint(
+                        sandbox=sandbox,
+                        fixture_id=args.fixture_id,
+                        party_size=args.party_size,
+                        planned_row_id=planned_row_id,
+                        arm=arm,
+                        source_sha=args.source_sha,
+                        run_id=args.run_id,
+                        travel_turn=checkpoint_travel_turn,
+                        travel_proof=checkpoint_travel_proof,
+                        initial_state_sha256=checkpoint_before_sha256,
+                        initial_time=checkpoint_initial_time,
+                        project_root=root,
+                    )
+                )
+                checkpoint_directory = root / checkpoint_descriptor["checkpoint_root"]
+            except CharacterizationError as exc:
+                failure_code = failure_code or exc.code
+            except Exception as exc:
+                failure_code = failure_code or (
+                    "checkpoint_creation_failed_" + type(exc).__name__
+                )
+
+    if create_resume_checkpoint:
+        lock_released = release_live_window_lock()
+        if not lock_released:
+            failure_code = failure_code or "shared_live_window_lock_release_failed"
+
+    if run_directory is not None:
+        teardown_evidence_path = run_directory / "teardown-evidence.json"
+        teardown_evidence_relative = teardown_evidence_path.relative_to(root).as_posix()
+        after_teardown_sample = next(
+            (
+                sample
+                for sample in socket_pid_samples
+                if sample.get("phase") == "after_teardown"
+            ),
+            None,
+        )
+        worker_result_path = _worker_result_path_for_run(args.run_id, preflight_run_id)
+        shutdown_request_path = _worker_shutdown_request_path_for_run(
+            args.run_id, preflight_run_id
+        )
+        try:
+            worker_result_raw = worker_result_path.read_bytes()
+            worker_result_sha256 = hashlib.sha256(worker_result_raw).hexdigest()
+        except OSError:
+            worker_result_sha256 = None
+        try:
+            shutdown_request_raw = shutdown_request_path.read_bytes()
+            shutdown_request_sha256 = hashlib.sha256(shutdown_request_raw).hexdigest()
+        except OSError:
+            shutdown_request_sha256 = None
+        worker_returncode = (
+            getattr(process, "returncode", None) if process is not None else None
+        )
+        if worker_returncode is None and process is not None:
+            worker_returncode = getattr(process, "return_code", None)
+        worker_reaped = bool(
+            process is not None
+            and process.poll() is not None
+            and type(worker_returncode) is int
+        )
+        worker_stop = {
+            "observed": worker_reaped,
+            "worker_pid": process.pid if process is not None else None,
+            "process_group_id": process.pid if process is not None else None,
+            "stop_operation": "owned-process-group-wait",
+            "requested_signal": (
+                shutdown_request.get("signal_number")
+                if isinstance(shutdown_request, Mapping)
+                else None
+            ),
+            "shutdown_request_path": (
+                shutdown_request_path.relative_to(root).as_posix()
+                if shutdown_request_path.is_file()
+                else None
+            ),
+            "shutdown_request_sha256": shutdown_request_sha256,
+            "worker_result_path": (
+                worker_result_path.relative_to(root).as_posix()
+                if worker_result_path.is_file()
+                else None
+            ),
+            "worker_result_sha256": worker_result_sha256,
+            "server_returned": (
+                result.get("server_returned") if isinstance(result, Mapping) else None
+            ),
+            "interrupted": (
+                result.get("interrupted") if isinstance(result, Mapping) else None
+            ),
+            "graceful_shutdown_requested": (
+                result.get("graceful_shutdown_requested")
+                if isinstance(result, Mapping)
+                else None
+            ),
+            "signal_received_at_ns": (
+                result.get("shutdown_signal_received_at_ns")
+                if isinstance(result, Mapping)
+                else None
+            ),
+            "returncode": worker_returncode,
+            "reaped": worker_reaped,
+            "observed_at_ns": time.time_ns(),
+        }
+        lock_release_evidence = {
+            "release_attempted": bool(getattr(lock, "release_attempted", False)),
+            "lock_directory_removed": bool(
+                getattr(lock, "lock_directory_removed", False)
+            ),
+            "release_succeeded": lock_released,
+            "booking_record": dict(lock_record),
+            "release_record": getattr(lock, "release_record", None),
+            "durable_record": getattr(lock, "release_log_reference", None),
+        }
+        teardown_sidecar = {
+            "schema_version": 2,
+            "run_id": args.run_id,
+            "preflight_run_id": preflight_run_id,
+            "source_sha": args.source_sha,
+            "runner_source_sha256": hashlib.sha256(
+                Path(__file__).read_bytes()
+            ).hexdigest(),
+            "booking_id": lock_record.get("booking_id"),
+            "controller_pid": os.getpid(),
+            "worker_stop": worker_stop,
+            "port_observations": {
+                str(port): teardown_port_observations.get(port)
+                for port in REQUIRED_PORTS
+            },
+            "teardown_wait": teardown_wait_evidence,
+            "socket_census": {
+                "phase": "after_teardown",
+                "path": (
+                    after_teardown_sample.get("evidence_path")
+                    if isinstance(after_teardown_sample, Mapping)
+                    else None
+                ),
+                "sha256": (
+                    after_teardown_sample.get("evidence_sha256")
+                    if isinstance(after_teardown_sample, Mapping)
+                    else None
+                ),
+                "observed": (
+                    after_teardown_sample.get("observed")
+                    if isinstance(after_teardown_sample, Mapping)
+                    else False
+                ),
+                "pids": (
+                    after_teardown_sample.get("pids")
+                    if isinstance(after_teardown_sample, Mapping)
+                    else None
+                ),
+                "listener_pids": (
+                    after_teardown_sample.get("listener_pids")
+                    if isinstance(after_teardown_sample, Mapping)
+                    else None
+                ),
+            },
+            "shared_lock": lock_release_evidence,
+        }
+        comparison_identity = getattr(args, "comparison_identity_json", None)
+        if comparison_identity is not None:
+            teardown_sidecar["comparison_identity"] = dict(comparison_identity)
+        teardown_evidence_descriptor: dict[str, Any] | None = None
+        try:
+            _write_json(teardown_evidence_path, teardown_sidecar)
+            teardown_evidence_descriptor = {
+                "path": teardown_evidence_relative,
+                "sha256": hashlib.sha256(
+                    teardown_evidence_path.read_bytes()
+                ).hexdigest(),
+            }
+        except (CharacterizationError, OSError, ValueError) as exc:
+            failure_code = failure_code or (
+                "teardown_evidence_write_failed_" + type(exc).__name__
+            )
+
+        calls = result.get("calls") if isinstance(result, Mapping) else []
+        if not isinstance(calls, list):
+            calls = []
+        call_count = result.get("call_count") if isinstance(result, Mapping) else 0
+        if type(call_count) is not int or call_count < 0:
+            call_count = len(calls)
+        command_sites = _make_evidence_sites(calls)
+        evidence = {
+            "schema_version": 1,
+            "authorization_ruling_id": AUTHORIZATION_RULING_ID,
+            "profile_id": profile_id,
+            "fixture_id": args.fixture_id,
+            "party_size": args.party_size,
+            "lifecycle": args.lifecycle,
+            "planned_row_id": planned_row_id,
+            "arm": arm,
+            "sandbox_root": SANDBOX_RELATIVE.as_posix(),
+            "run_id": args.run_id,
+            "source_sha": args.source_sha,
+            "command": command,
+            "working_directory": SANDBOX_RELATIVE.as_posix(),
+            "pythonpath": guarded_environment.get("PYTHONPATH", ""),
+            "invocation_identity": (
+                result.get("invocation_identity")
+                if isinstance(result, Mapping)
+                else None
+            ),
+            "process_canaries": sorted(
+                process_canaries,
+                key=lambda report: report.get("canary_stage", ""),
+            ),
+            "guard_event_journal": {
+                "path": (run_directory / "guard-events.jsonl").relative_to(root).as_posix(),
+                "sha256": hashlib.sha256(guard_events_raw).hexdigest(),
+                "event_count": len(guard_events),
+                "complete": guard_events_complete,
+            },
+            "process_census": process_census,
+            "worker_shutdown": {
+                "server_returned": (
+                    result.get("server_returned")
+                    if isinstance(result, Mapping)
+                    else None
+                ),
+                "interrupted": (
+                    result.get("interrupted")
+                    if isinstance(result, Mapping)
+                    else None
+                ),
+                "graceful_shutdown_requested": (
+                    result.get("graceful_shutdown_requested")
+                    if isinstance(result, Mapping)
+                    else None
+                ),
+                "signal_received_at_ns": (
+                    result.get("shutdown_signal_received_at_ns")
+                    if isinstance(result, Mapping)
+                    else None
+                ),
+                "request": (
+                    result.get("shutdown_request")
+                    if isinstance(result, Mapping)
+                    else shutdown_request
+                ),
+            },
+            "controller_interpreter": _interpreter_identity(),
+            "worker_interpreter": (
+                result.get("interpreter") if isinstance(result, Mapping) else None
+            ),
+            "network_guard_active": (
+                result.get("guard_active")
+                if isinstance(result, Mapping)
+                else None
+            ),
+            "provider_environment_keys_blank": (
+                result.get("provider_environment_keys_blank")
+                if isinstance(result, Mapping)
+                else None
+            ),
+            "sandbox_provider_key_placeholder": (
+                result.get("sandbox_provider_key_placeholder")
+                if isinstance(result, Mapping)
+                else None
+            ),
+            "proxy_values_blank": (
+                result.get("proxy_values_blank")
+                if isinstance(result, Mapping)
+                else None
+            ),
+            "real_project_config_loaded": (
+                result.get("real_project_config_loaded")
+                if isinstance(result, Mapping)
+                else None
+            ),
+            "sandbox_config_loaded": (
+                result.get("sandbox_config_loaded")
+                if isinstance(result, Mapping)
+                else None
+            ),
+            "startup_guard_from_sitecustomize": (
+                result.get("startup_guard_from_sitecustomize")
+                if isinstance(result, Mapping)
+                else None
+            ),
+            "sandbox_config_origin_guard_active": (
+                result.get("sandbox_config_origin_guard_active")
+                if isinstance(result, Mapping)
+                else None
+            ),
+            "driver_exchange": driver_exchange,
+            "outcome": "completed" if failure_code is None else "failed",
+            "calls": calls,
+            "call_count": call_count,
+            "call_sites": command_sites,
+            "adv_summary_child": (
+                result.get("adv_summary_child")
+                if isinstance(result, Mapping)
+                else None
+            ),
+            "host_command": command,
+            "runner_command": runner_command,
+            "failure_code": failure_code,
+            "teardown": {
+                "server_stopped": server_stopped,
+                "port_8360_free": port_status.get(HOST_PORT) is True,
+                "port_8370_free": port_status.get(PLAYER_PORT) is True,
+                "lock_released": lock_released,
+            },
+            "teardown_evidence": teardown_evidence_descriptor,
+        }
+        if summary_child_artifacts is not None:
+            evidence["summary_child_artifacts"] = summary_child_artifacts
+        if summary_child_retention is not None:
+            evidence["summary_child_retention"] = summary_child_retention
+        if create_resume_checkpoint:
+            evidence["checkpoint_travel"] = checkpoint_travel_proof
+            evidence["resume_checkpoint"] = checkpoint_descriptor
+            evidence["checkpoint_attestation"] = checkpoint_attestation
+        evidence_path = run_directory / "profile-evidence.json"
+        _write_json(evidence_path, evidence)
+        evidence_relative = evidence_path.relative_to(root).as_posix()
+        evidence_sha256 = hashlib.sha256(evidence_path.read_bytes()).hexdigest()
+    else:
+        evidence_relative = ""
+        evidence_sha256 = ""
+
+    if failure_code is not None or evidence is None:
+        if checkpoint_directory is not None and checkpoint_directory.exists():
+            import shutil
+
+            try:
+                shutil.rmtree(checkpoint_directory)
+            except OSError as exc:
+                raise CharacterizationError("checkpoint_cleanup_failed") from exc
+        raise CharacterizationError(failure_code or "profile_not_measured")
+    return evidence, evidence_relative, evidence_sha256
+
+
+def supervise_preflight_row(
+    *,
+    fixture_id: str,
+    party_size: int,
+    planned_row_id: str,
+    arm: str,
+    source_sha: str,
+    row_run_id: str,
+    preflight_run_id: str,
+    lifecycle: str = "startup",
+    resume_checkpoint_sha256: str | None = None,
+    create_resume_checkpoint: bool = False,
+    comparison_identity: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Run one fixture lifecycle through the guarded host and script driver.
+
+    This reuses the same supervisor as characterization while keeping row
+    preflight evidence in its own namespace and never claiming a characterization
+    attempt. The supervisor starts only the guarded worker; that worker delegates
+    host launch to ``mapping_pilot.server.launch_worker``.
+    """
+    if (
+        fixture_id not in _FIXTURE_IDS
+        or type(party_size) is not int
+        or party_size not in (1, 4)
+        or not isinstance(planned_row_id, str)
+        or arm not in ("A", "B", "D")
+        or not isinstance(source_sha, str)
+        or _SHA1_OR_SHA256.fullmatch(source_sha) is None
+        or not isinstance(row_run_id, str)
+        or _SAFE_RUN_ID.fullmatch(row_run_id) is None
+        or not isinstance(preflight_run_id, str)
+        or _SAFE_RUN_ID.fullmatch(preflight_run_id) is None
+        or lifecycle not in ("startup", "resume")
+        or type(create_resume_checkpoint) is not bool
+        or (
+            create_resume_checkpoint
+            and (
+                lifecycle != "startup"
+                or resume_checkpoint_sha256 is not None
+                or fixture_id not in _CHECKPOINT_TRAVEL_STEPS
+            )
+        )
+        or (
+            lifecycle == "resume"
+            and (
+                not isinstance(resume_checkpoint_sha256, str)
+                or not _SHA256.fullmatch(resume_checkpoint_sha256)
+            )
+        )
+        or (lifecycle == "startup" and resume_checkpoint_sha256 is not None)
+    ):
+        raise CharacterizationError("row_preflight_identity_invalid")
+    _validate_supervised_planned_row(
+        fixture_id=fixture_id,
+        party_size=party_size,
+        planned_row_id=planned_row_id,
+        arm=arm,
+    )
+    if comparison_identity is not None:
+        from scripts.live_gate_preflight_comparison_identity import (
+            ComparisonIdentityError,
+            validate_comparison_identity,
+        )
+
+        try:
+            comparison_identity = validate_comparison_identity(
+                comparison_identity, expected_application_sha=source_sha
+            )
+        except ComparisonIdentityError as exc:
+            raise CharacterizationError(exc.args[0]) from exc
+    args = argparse.Namespace(
+        fixture_id=fixture_id,
+        party_size=party_size,
+        lifecycle=lifecycle,
+        source_sha=source_sha,
+        run_id=row_run_id,
+        resume_checkpoint_sha256=resume_checkpoint_sha256,
+        planned_row_id=planned_row_id,
+        arm=arm,
+        lifecycle_id=row_run_id + ("_s" if lifecycle == "startup" else "_r"),
+        preflight_run_id=preflight_run_id,
+        create_resume_checkpoint=create_resume_checkpoint,
+        comparison_identity_json=(
+            dict(comparison_identity) if comparison_identity is not None else None
+        ),
+    )
+    evidence, evidence_path, evidence_sha256 = _characterize(args)
+    result = {
+        "evidence": evidence,
+        "evidence_path": evidence_path,
+        "evidence_sha256": evidence_sha256,
+    }
+    if comparison_identity is not None:
+        result["comparison_identity"] = dict(comparison_identity)
+    return result
+
+
+def _validate_supervised_planned_row(
+    *, fixture_id: str, party_size: int, planned_row_id: str, arm: str
+) -> None:
+    """Bind a supervised launch to the frozen planned row and its profile."""
+    try:
+        from scripts.live_gate_preflight_controller import (
+            _load_frozen_row_ids,
+            _load_profiles,
+            _resolve_row_plan,
+        )
+
+        frozen_rows, _reserve_row_ids = _load_frozen_row_ids(None)
+        expected_row = next(
+            (
+                row
+                for row in frozen_rows
+                if row.get("row_id") == planned_row_id
+            ),
+            None,
+        )
+        if not isinstance(expected_row, Mapping):
+            raise ValueError("planned row is not in the frozen counterbalance")
+        profiles, _coverage = _load_profiles(
+            [str(row["row_id"]) for row in frozen_rows]
+        )
+        plan = _resolve_row_plan(
+            planned_row_id,
+            prereg_root=None,
+            expected_row=expected_row,
+            profiles=profiles,
+        )
+        if (
+            plan.row_id != planned_row_id
+            or plan.party_size != party_size
+            or plan.arm != arm
+            or fixture_id not in plan.fixture_ids
+        ):
+            raise ValueError("supervised row identity differs from frozen plan")
+    except Exception as exc:
+        raise CharacterizationError("row_preflight_identity_invalid") from exc
+
+
+def _lock_holder_for_worker(args: argparse.Namespace) -> Mapping[str, Any]:
+    common_directory = _git_common_directory()
+    holder_path = common_directory / "neq-coordination" / "live-window.lock" / "holder.json"
+    if holder_path.is_symlink() or not holder_path.is_file():
+        raise CharacterizationError("shared_live_window_lock_missing")
+    holder = _read_json(holder_path, "live_window_holder")
+    if (
+        not isinstance(holder, Mapping)
+        or not _valid_live_window_lock_record(holder)
+        or holder.get("authorizing_ruling") != AUTHORIZATION_RULING_ID
+        or holder.get("gate") != "live-gate-preflight"
+        or holder.get("run_id") != args.run_id
+        or holder.get("source_sha") != args.source_sha
+        or holder.get("fixture_id") != args.fixture_id
+        or holder.get("party_size") != args.party_size
+        or holder.get("lifecycle") != args.lifecycle
+        or holder.get("planned_row_id") != args.planned_row_id
+    ):
+        raise CharacterizationError("shared_live_window_lock_identity_mismatch")
+    return holder
+
+
+def _activate_sandbox_sitecustomize(sandbox: Path) -> None:
+    try:
+        from scripts.live_gate_preflight_safety import (
+            activate_preflight_safety,
+            require_startup_guard_from,
+        )
+
+        del sandbox
+        expected_sitecustomize = (
+            PROJECT_ROOT / "scripts" / "live_gate_preflight_guard" / "sitecustomize.py"
+        )
+        require_startup_guard_from(expected_sitecustomize, require_local_guard=False)
+        activate_preflight_safety()
+        require_startup_guard_from(expected_sitecustomize)
+    except CharacterizationError:
+        raise
+    except Exception as exc:
+        raise CharacterizationError("host_startup_guard_inactive") from exc
+
+
+def _provider_free_client_factory(*_args: Any, **_kwargs: Any) -> None:
+    """Keep import-time host globals from constructing provider SDK clients."""
+
+
+def _characterization_stub_responses(fixture_id: str) -> dict[str, str]:
+    """Return explicit response strings for the observed host-path router tasks.
+
+    Each payload follows the consumer contract at its call site. The
+    ``dm_validation`` payload uses the exact start location declared by the
+    selected preregistered fixture; these are characterization fixtures, not
+    model judgments.
+    """
+    start_locations = {
+        "interior_tavern": (
+            "MP01",
+            "The Lantern and Reed Tavern",
+            "MPA001",
+            "Mapping Pilot Arena",
+        ),
+        "landscape_village": (
+            "MP02",
+            "Rillford Village Green",
+            "MPA001",
+            "Mapping Pilot Arena",
+        ),
+        "transition_tower_approach": (
+            "MP03",
+            "Old Watchtower Approach",
+            "MPA002",
+            "Old Watchtower Approach",
+        ),
+        "combat_stage_tavern_zones": (
+            "MP01",
+            "The Lantern and Reed Tavern",
+            "MPA001",
+            "Mapping Pilot Arena",
+        ),
+    }
+    start_location = start_locations.get(fixture_id)
+    if start_location is None:
+        raise CharacterizationError("unsupported_fixture_party_profile")
+    location_id, location_name, area_id, area_name = start_location
+    return {
+        "travel_narration": json.dumps(
+            {
+                "travelNarration": "The party travels to a new region where fresh adventures await.",
+                "dmGuidance": "Present this as a transition to the new module.",
+            },
+            ensure_ascii=True,
+            separators=(",", ":"),
+        ),
+        "safety_review": json.dumps(
+            {
+                "safe": True,
+                "reason": "Provider-free characterization stub; not a safety verdict.",
+            },
+            ensure_ascii=True,
+            separators=(",", ":"),
+        ),
+        "action_prediction": json.dumps(
+            {
+                "requires_actions": True,
+                "reason": "Use the conservative action-routing path in preflight.",
+            },
+            ensure_ascii=True,
+            separators=(",", ":"),
+        ),
+        # The startup consumer in core.combat.bootstrap requires narration,
+        # combat_round, and actions. An empty action list keeps this response
+        # mechanically inert while satisfying that real consumer contract.
+        "combat_main": json.dumps(
+            {
+                "narration": "The combatants hold position as the encounter begins.",
+                "combat_round": 1,
+                "actions": [],
+            },
+            ensure_ascii=True,
+            separators=(",", ":"),
+        ),
+        "dm_main": (
+            '{"narration":"The party pauses and takes in the scene.",'
+            '"actions":[]}'
+        ),
+        # cumulative_summary.generate_location_summary calls .strip() on a
+        # plain-text adventure_summary response; it does not consume JSON.
+        "adventure_summary": (
+            "The provider-free response records the scripted conversation. "
+            "It adds no events beyond the supplied history."
+        ),
+        "dm_validation": json.dumps(
+            {
+                "locationId": location_id,
+                "locationName": location_name,
+                "areaId": area_id,
+                "areaName": area_name,
+                "reasoning": "Use the preregistered fixture start location in preflight.",
+            },
+            ensure_ascii=True,
+            separators=(",", ":"),
+        ),
+    }
+
+
+def _worker(args: argparse.Namespace) -> int:
+    preflight_run_id = getattr(args, "preflight_run_id", None)
+    try:
+        _require_worker_startup_guard()
+    except CharacterizationError as exc:
+        startup_guard_failure = exc.code
+    else:
+        startup_guard_failure = None
+    try:
+        root = _require_safe_worker_root()
+    except CharacterizationError as exc:
+        root = PROJECT_ROOT
+        worker_root_failure = exc.code
+    else:
+        worker_root_failure = None
+    sandbox = root / SANDBOX_RELATIVE
+    server_returned = False
+    interrupted = False
+    graceful_shutdown_requested = False
+    shutdown_request: dict[str, Any] | None = None
+    shutdown_signal_received_at_ns: int | None = None
+    failure_code: str | None = None
+    stub: Any = None
+    router_stub_cleanup: Any = None
+    checkpoint_travel_resolver: Any = None
+    invocation_identity_evidence: dict[str, Any] | None = None
+    sandbox_provider_key_placeholder: str | None = None
+    command: list[str] | None = None
+    adv_summary_child_adapter: Any = None
+    child_evidence_path: Path | None = None
+    startup_guard_from_sitecustomize = False
+    sandbox_config_origin_guard_active = False
+    config_guard: _SandboxConfigOriginGuard | None = None
+    previous_sys_path = list(sys.path)
+    try:
+        from scripts.live_gate_preflight_safety import (
+            GUARD_EVENTS_PATH_ENV,
+            InvocationIdentityMismatch,
+            NetworkGuardError,
+            RUN_ID_ENV,
+            SafetyConfigurationError,
+            _validate_guard_event_path,
+            current_invocation_identity,
+            compare_invocation_identity,
+            require_guard_active,
+            require_invocation_identity,
+            startup_invocation_identity,
+        )
+        from scripts.live_gate_preflight_stub import (
+            FailClosedRouterStub,
+            RouterStubError,
+            _read_adv_summary_child_records,
+            install_adv_summary_preflight_host_interceptor,
+            install_fail_closed_router_stub,
+        )
+
+        command = _host_command(
+            fixture_id=args.fixture_id,
+            party_size=args.party_size,
+            lifecycle=args.lifecycle,
+            source_sha=args.source_sha,
+            run_id=args.run_id,
+            planned_row_id=args.planned_row_id,
+            arm=args.arm,
+            lifecycle_id=args.lifecycle_id,
+            resume_checkpoint_sha256=args.resume_checkpoint_sha256,
+            preflight_run_id=preflight_run_id,
+            create_resume_checkpoint=args.create_resume_checkpoint,
+            comparison_identity=getattr(args, "comparison_identity_json", None),
+        )
+        expected_pythonpath = os.pathsep.join(
+            (
+                str(root / "scripts" / "live_gate_preflight_guard"),
+                str(root),
+            )
+        )
+        declared_identity = {
+            "command": command,
+            "working_directory": str(sandbox),
+            "pythonpath": expected_pythonpath,
+        }
+        invocation_identity_evidence = compare_invocation_identity(
+            declared_identity, current_invocation_identity()
+        )
+        if invocation_identity_evidence["mismatches"]:
+            if startup_guard_failure is not None:
+                raise CharacterizationError(startup_guard_failure)
+            raise CharacterizationError("invocation_identity_mismatch")
+        if startup_guard_failure is not None:
+            raise CharacterizationError(startup_guard_failure)
+        try:
+            invocation_identity_evidence = require_invocation_identity(
+                declared_identity, startup_invocation_identity()
+            )
+            require_invocation_identity(
+                declared_identity, current_invocation_identity()
+            )
+        except InvocationIdentityMismatch as exc:
+            invocation_identity_evidence = exc.evidence
+            raise CharacterizationError("invocation_identity_mismatch") from None
+        except NetworkGuardError:
+            invocation_identity_evidence = {
+                "schema_version": 1,
+                "status": "unavailable",
+                "fields_compared": [
+                    "command",
+                    "working_directory",
+                    "pythonpath",
+                ],
+                "mismatches": [],
+                "failure_code": "startup_invocation_identity_unavailable",
+            }
+            raise CharacterizationError(
+                "startup_invocation_identity_unavailable"
+            ) from None
+        if worker_root_failure is not None:
+            raise CharacterizationError(worker_root_failure)
+        _configure_sandbox_import_paths(root, sandbox)
+        _activate_sandbox_sitecustomize(sandbox)
+        require_guard_active()
+        startup_guard_from_sitecustomize = True
+        config_guard = _install_sandbox_config_guard(sandbox)
+        sandbox_config_origin_guard_active = config_guard in sys.meta_path
+        _verify_bound_source_identity(
+            args.source_sha, getattr(args, "comparison_identity_json", None)
+        )
+        _lock_holder_for_worker(args)
+        from scripts.mapping_pilot import server
+
+        server_path = Path(server.__file__).resolve(strict=True)
+        if server_path != root / "scripts" / "mapping_pilot" / "server.py":
+            raise CharacterizationError("mapping_pilot_server_source_mismatch")
+
+        sys.path.insert(0, str(sandbox))
+        try:
+            sandbox_provider_key_placeholder = _require_synthetic_sandbox_config(
+                sandbox / "config.py"
+            )
+            import config as sandbox_config
+
+            if (
+                Path(sandbox_config.__file__).resolve(strict=True)
+                != (sandbox / "config.py").resolve(strict=True)
+                or not all(
+                    type(getattr(sandbox_config, name, None)) is str
+                    and getattr(sandbox_config, name, None)
+                    == sandbox_provider_key_placeholder
+                    for name in _KNOWN_PROVIDER_KEYS
+                )
+            ):
+                raise CharacterizationError(
+                    "sandbox_provider_key_placeholder_invalid"
+                )
+            from utils import ai_client_factory, llm_router
+
+            router_path = Path(llm_router.__file__).resolve(strict=True)
+            if router_path != sandbox / "utils" / "llm_router.py":
+                raise CharacterizationError("sandbox_router_source_mismatch")
+            factory_path = Path(ai_client_factory.__file__).resolve(strict=True)
+            if factory_path != sandbox / "utils" / "ai_client_factory.py":
+                raise CharacterizationError(
+                    "sandbox_provider_factory_source_mismatch"
+                )
+            router = getattr(llm_router, "llm", None)
+            if not callable(getattr(router, "call", None)):
+                raise CharacterizationError("sandbox_router_unavailable")
+            original_create_chat_client = getattr(
+                ai_client_factory, "create_chat_client", None
+            )
+            if not callable(original_create_chat_client):
+                raise CharacterizationError(
+                    "sandbox_provider_factory_unavailable"
+                )
+            if args.create_resume_checkpoint:
+                travel_turn = _load_worker_checkpoint_travel_turn(args, sandbox)
+                if not isinstance(travel_turn, Mapping):
+                    raise CharacterizationError("checkpoint_travel_turn_missing")
+                checkpoint_travel_resolver = _checkpoint_travel_response_resolver(
+                    travel_turn
+                )
+            stub = FailClosedRouterStub(
+                source_sha=args.source_sha,
+                responses=_characterization_stub_responses(args.fixture_id),
+                response_resolver=checkpoint_travel_resolver,
+                command=command,
+                pythonpath=os.environ.get("PYTHONPATH", ""),
+                source_root=sandbox,
+            )
+            router_stub_cleanup = install_fail_closed_router_stub(router, stub)
+            # main.py and core.combat.combat_manager.py create module-level
+            # clients during import. Keep those globals inert; routed gameplay
+            # calls use the fail-closed stub above, and the sandbox-only provider
+            # placeholders cannot authorize or reach a provider request.
+            previous_sigint_handler = signal.getsignal(signal.SIGINT)
+            ai_client_factory.create_chat_client = _provider_free_client_factory
+
+            def handle_shutdown_signal(signum: int, _frame: Any) -> None:
+                nonlocal interrupted
+                nonlocal graceful_shutdown_requested
+                nonlocal shutdown_request
+                nonlocal shutdown_signal_received_at_ns
+
+                observed_at_ns = time.time_ns()
+                if signum == int(signal.SIGINT):
+                    interrupted = True
+                    shutdown_signal_received_at_ns = observed_at_ns
+                    try:
+                        candidate = _read_json(
+                            _worker_shutdown_request_path_for_run(
+                                args.run_id, preflight_run_id
+                            ),
+                            "worker_shutdown_request",
+                        )
+                    except CharacterizationError:
+                        candidate = None
+                    process_group_id = os.getpgrp()
+                    if _valid_worker_shutdown_request(
+                        candidate,
+                        run_id=args.run_id,
+                        worker_pid=os.getpid(),
+                        process_group_id=process_group_id,
+                        signal_number=signum,
+                        signal_received_at_ns=observed_at_ns,
+                    ):
+                        shutdown_request = dict(candidate)
+                        graceful_shutdown_requested = True
+                raise KeyboardInterrupt()
+
+            signal_handler_installed = False
+            try:
+                signal.signal(signal.SIGINT, handle_shutdown_signal)
+                signal_handler_installed = True
+                try:
+                    guard_events_text = os.environ.get(GUARD_EVENTS_PATH_ENV)
+                    if os.environ.get(RUN_ID_ENV) != args.run_id or not guard_events_text:
+                        raise CharacterizationError(
+                            "summary_child_guard_event_identity_missing"
+                        )
+                    try:
+                        validated_guard_path = _validate_guard_event_path(
+                            guard_events_text, args.run_id
+                        )
+                    except SafetyConfigurationError as exc:
+                        raise CharacterizationError(
+                            "summary_child_guard_event_identity_invalid"
+                        ) from exc
+                    child_evidence_path = validated_guard_path.with_name(
+                        "adv-summary-child.jsonl"
+                    )
+                    adv_summary_child_adapter = (
+                        install_adv_summary_preflight_host_interceptor(
+                            source_sha=args.source_sha,
+                            sandbox_root=sandbox,
+                            evidence_path=child_evidence_path,
+                        )
+                    )
+                    server.launch_worker(
+                        arm=args.arm,
+                        fixture_id=args.fixture_id,
+                        party_size=args.party_size,
+                        row_run_id=args.run_id,
+                        lifecycle_id=args.lifecycle_id,
+                        resume=args.lifecycle == "resume",
+                        resume_checkpoint_sha256=args.resume_checkpoint_sha256,
+                        runtime_root=SANDBOX_RELATIVE,
+                    )
+                    server_returned = True
+                    if not interrupted:
+                        failure_code = failure_code or (
+                            "host_server_returned_without_graceful_shutdown"
+                        )
+                    elif not graceful_shutdown_requested:
+                        failure_code = failure_code or (
+                            "host_interrupt_without_shutdown_request"
+                        )
+                    elif (
+                        shutdown_request is None
+                        or shutdown_request.get("readiness_succeeded") is not True
+                        or shutdown_request.get("exchange_succeeded") is not True
+                    ):
+                        failure_code = failure_code or (
+                            "host_shutdown_prerequisites_not_met"
+                        )
+                except KeyboardInterrupt:
+                    server_returned = False
+                    if not interrupted:
+                        failure_code = failure_code or (
+                            "host_interrupt_without_shutdown_signal"
+                        )
+                    elif not graceful_shutdown_requested:
+                        failure_code = failure_code or (
+                            "host_interrupt_without_shutdown_request"
+                        )
+                    elif (
+                        shutdown_request is None
+                        or shutdown_request.get("readiness_succeeded") is not True
+                        or shutdown_request.get("exchange_succeeded") is not True
+                    ):
+                        failure_code = failure_code or (
+                            "host_shutdown_prerequisites_not_met"
+                        )
+                except BaseException as exc:
+                    server_returned = False
+                    failure_code = "host_exception_" + type(exc).__name__
+            finally:
+                try:
+                    if adv_summary_child_adapter is not None:
+                        try:
+                            adv_summary_child_adapter.cleanup()
+                        except Exception:
+                            failure_code = (
+                                failure_code or "summary_child_interceptor_cleanup_failed"
+                            )
+                    if signal_handler_installed:
+                        signal.signal(signal.SIGINT, previous_sigint_handler)
+                finally:
+                    try:
+                        ai_client_factory.create_chat_client = (
+                            original_create_chat_client
+                        )
+                    finally:
+                        if router_stub_cleanup is not None:
+                            router_stub_cleanup()
+        finally:
+            if sys.path and sys.path[0] == str(sandbox):
+                sys.path.pop(0)
+    except BaseException as exc:
+        server_returned = False
+        interrupted = False
+        failure_code = (
+            exc.code if isinstance(exc, CharacterizationError)
+            else "host_exception_" + type(exc).__name__
+        )
+    finally:
+        _remove_import_guard(config_guard)
+        sys.path[:] = previous_sys_path
+
+    root_text = str(PROJECT_ROOT)
+    if root_text not in sys.path:
+        sys.path.insert(0, root_text)
+    from scripts.live_gate_preflight_safety import (
+        ACTIVE_GUARD_ENV,
+        SANDBOX_PROVIDER_KEY_PLACEHOLDER,
+        require_guard_active,
+    )
+
+    try:
+        require_guard_active()
+        guard_active = os.environ.get(ACTIVE_GUARD_ENV) == "1"
+    except Exception:
+        guard_active = False
+    provider_environment_keys_blank = all(
+        os.environ.get(name, "") == "" for name in _KNOWN_PROVIDER_KEYS
+    )
+    proxy_values_blank = all(
+        not name.upper().endswith("_PROXY") or value == ""
+        for name, value in os.environ.items()
+    )
+    config_module = sys.modules.get("config")
+    config_path = getattr(config_module, "__file__", None)
+    real_project_config_loaded = False
+    sandbox_config_loaded = False
+    if isinstance(config_path, (str, os.PathLike)):
+        try:
+            resolved_config = Path(config_path).resolve(strict=True)
+            real_project_config_loaded = resolved_config == (root / "config.py").resolve(
+                strict=True
+            )
+            sandbox_config_loaded = resolved_config == (sandbox / "config.py").resolve(
+                strict=True
+            )
+        except (OSError, RuntimeError):
+            real_project_config_loaded = True
+    if not sandbox_config_loaded and failure_code is None:
+        failure_code = "sandbox_config_identity_invalid"
+    if config_module is not None:
+        configured_provider_keys = [
+            getattr(config_module, name, None) for name in _KNOWN_PROVIDER_KEYS
+        ]
+        if all(
+            type(value) is str and value == SANDBOX_PROVIDER_KEY_PLACEHOLDER
+            for value in configured_provider_keys
+        ):
+            sandbox_provider_key_placeholder = SANDBOX_PROVIDER_KEY_PLACEHOLDER
+        elif failure_code is None:
+            failure_code = "sandbox_provider_key_placeholder_invalid"
+    elif failure_code is None:
+        failure_code = "sandbox_provider_key_placeholder_invalid"
+    stub_failure_code = getattr(stub, "failure_code", None)
+    host_calls = list(getattr(stub, "calls", []))
+    child_calls = list(
+        getattr(adv_summary_child_adapter, "calls", [])
+        if adv_summary_child_adapter is not None
+        else []
+    )
+    calls = host_calls
+    host_call_count = getattr(stub, "call_count", len(host_calls))
+    child_failure_code = getattr(
+        adv_summary_child_adapter, "failure_code", None
+    )
+    child_launches = list(
+        getattr(adv_summary_child_adapter, "launches", [])
+        if adv_summary_child_adapter is not None
+        else []
+    )
+    if adv_summary_child_adapter is None:
+        child_failure_code = child_failure_code or "summary_child_adapter_not_installed"
+    child_evidence_sha256: str | None = None
+    child_record_count = 0
+    if child_evidence_path is None:
+        child_evidence_path = _worker_result_path_for_run(
+            args.run_id, preflight_run_id
+        ).with_name("adv-summary-child.jsonl")
+    try:
+        child_evidence_raw = child_evidence_path.read_bytes()
+        child_records = _read_adv_summary_child_records(child_evidence_path)
+        child_evidence_sha256 = hashlib.sha256(child_evidence_raw).hexdigest()
+        child_record_count = len(child_records)
+    except (OSError, RouterStubError, ValueError, UnicodeError, NameError):
+        child_failure_code = child_failure_code or "summary_child_evidence_unavailable"
+        failure_code = failure_code or "summary_child_evidence_unavailable"
+        child_records = []
+    if (
+        len(child_records) != len(child_launches)
+        or len(child_calls) != 2 * len(child_launches)
+    ):
+        child_failure_code = child_failure_code or "summary_child_evidence_count_mismatch"
+        failure_code = failure_code or "summary_child_evidence_count_mismatch"
+    adv_summary_child_evidence = {
+        "schema_version": 1,
+        "adapter_installed": adv_summary_child_adapter is not None,
+        "launch_count": len(child_launches),
+        "launches": child_launches,
+        "calls": child_calls,
+        "failure_code": child_failure_code,
+        "evidence_path": child_evidence_path.relative_to(PROJECT_ROOT).as_posix(),
+        "evidence_sha256": child_evidence_sha256,
+        "record_count": child_record_count,
+    }
+    call_count = host_call_count
+    if (
+        type(host_call_count) is not int
+        or host_call_count < 1
+        or host_call_count != len(host_calls)
+    ):
+        if failure_code is None:
+            failure_code = "host_router_call_count_invalid"
+    if child_failure_code is not None and failure_code is None:
+        failure_code = str(child_failure_code)
+    checkpoint_travel_proof: dict[str, Any] | None = None
+    if args.create_resume_checkpoint:
+        proof_method = getattr(checkpoint_travel_resolver, "proof", None)
+        checkpoint_travel_proof = proof_method() if callable(proof_method) else None
+        if (
+            not isinstance(checkpoint_travel_proof, Mapping)
+            or checkpoint_travel_proof.get("complete") is not True
+        ):
+            failure_code = failure_code or "checkpoint_travel_exchange_incomplete"
+    completed = (
+        type(server_returned) is bool
+        and interrupted
+        and failure_code is None
+        and graceful_shutdown_requested
+        and isinstance(shutdown_request, Mapping)
+        and shutdown_request.get("readiness_succeeded") is True
+        and shutdown_request.get("exchange_succeeded") is True
+        and type(shutdown_signal_received_at_ns) is int
+        and guard_active
+        and provider_environment_keys_blank
+        and proxy_values_blank
+        and not real_project_config_loaded
+        and sandbox_config_loaded
+        and sandbox_provider_key_placeholder == SANDBOX_PROVIDER_KEY_PLACEHOLDER
+        and startup_guard_from_sitecustomize
+        and sandbox_config_origin_guard_active
+        and type(call_count) is int
+        and call_count >= 1
+        and call_count == len(calls)
+        and stub_failure_code is None
+        and child_failure_code is None
+    )
+    result = {
+        "schema_version": 1,
+        "run_id": args.run_id,
+        "source_sha": args.source_sha,
+        "command": command,
+        "pythonpath": os.environ.get("PYTHONPATH", ""),
+        "invocation_identity": invocation_identity_evidence,
+        "interpreter": _interpreter_identity(),
+        "startup_canary_report": os.environ.get(
+            "NEQ_PREFLIGHT_STARTUP_CANARY_REPORT", ""
+        ),
+        "guard_active": guard_active,
+        "provider_environment_keys_blank": provider_environment_keys_blank,
+        "sandbox_provider_key_placeholder": sandbox_provider_key_placeholder,
+        "proxy_values_blank": proxy_values_blank,
+        "real_project_config_loaded": real_project_config_loaded,
+        "sandbox_config_loaded": sandbox_config_loaded,
+        "startup_guard_from_sitecustomize": startup_guard_from_sitecustomize,
+        "sandbox_config_origin_guard_active": sandbox_config_origin_guard_active,
+        "server_returned": server_returned,
+        "interrupted": interrupted,
+        "graceful_shutdown_requested": graceful_shutdown_requested,
+        "shutdown_request": shutdown_request,
+        "shutdown_signal_received_at_ns": shutdown_signal_received_at_ns,
+        "outcome": "completed" if completed else "failed",
+        "failure_code": failure_code or stub_failure_code,
+        "stub_failure_code": stub_failure_code,
+        "call_count": call_count,
+        "calls": calls,
+        "adv_summary_child": adv_summary_child_evidence,
+    }
+    comparison_identity = getattr(args, "comparison_identity_json", None)
+    if comparison_identity is not None:
+        result["comparison_identity"] = dict(comparison_identity)
+    if args.create_resume_checkpoint:
+        result["checkpoint_travel"] = checkpoint_travel_proof
+    try:
+        _write_json(
+            _worker_result_path_for_run(args.run_id, preflight_run_id),
+            result,
+        )
+    except Exception:
+        return 2
+    return 0 if completed else 1
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = _parse_args(argv)
+    if args.worker:
+        return _worker(args)
+    try:
+        evidence, evidence_path, evidence_sha256 = _characterize(args)
+    except CharacterizationError as exc:
+        print("[FAIL] profile_characterization=" + exc.code, file=sys.stderr)
+        return 1
+    print(
+        json.dumps(
+            {
+                "status": evidence["outcome"],
+                "profile_id": evidence["profile_id"],
+                "fixture_id": evidence["fixture_id"],
+                "party_size": evidence["party_size"],
+                "lifecycle": evidence["lifecycle"],
+                "call_count": evidence["call_count"],
+                "evidence_path": evidence_path,
+                "evidence_sha256": evidence_sha256,
+                "booking_eligible": False,
+                "failure_code": evidence.get("failure_code"),
+            },
+            ensure_ascii=True,
+            sort_keys=True,
+        )
+    )
+    return 0 if evidence["outcome"] == "completed" else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

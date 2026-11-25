@@ -1,0 +1,888 @@
+{
+  "schema_version": 1,
+  "profile_set_id": "live-gate-preflight-call-profiles-v1",
+  "authorization_ruling_id": "neq-w1-fr11-profiles-characterization-20261112",
+  "source_binding": {
+    "manifest_path": "plans/v2-mapping-pilot-prereg/MANIFEST.sha256",
+    "manifest_sha256": "49d600b9a7080253d99aa66a725bd981a594afbc3fde76b5df70253219d59c07",
+    "counterbalance_path": "plans/v2-mapping-pilot-prereg/counterbalance.json",
+    "counterbalance_sha256": "ef680c1c9049d9c570c66a1fb337fcca664f87abbd4dcca81e6133be2539ff70",
+    "profile_state_source_path": "openspec/changes/v2-mapping-pilot-execution/reports/sp4-primary-report.md",
+    "profile_state_source_sha256": "27367f4b48865c601c54b6013fa67d40a6119215cd9114275f3151c505fa10a5",
+    "reported_profile_report_sha256": "75f4e9304652ebecc46390d94daa3f57f7a6eeba77840e8140610a3da2b702db",
+    "profile_state_locator": "sp4-primary-report.md:105-117,148-149"
+  },
+  "profiles": [
+    {
+      "profile_id": "interior_tavern:p1",
+      "fixture_id": "interior_tavern",
+      "party_size": 1,
+      "planned_row_ids": [
+        "E01",
+        "E02",
+        "E03"
+      ],
+      "source_binding_id": "sp3-frozen-row-and-script-manifest-v1",
+      "startup": {
+        "status": "measured-under-stub",
+        "required": true,
+        "fixture_id": "interior_tavern",
+        "party_size": 1,
+        "call_count": 9,
+        "call_sites": [
+          {
+            "source_file": "core/ai/action_handler.py",
+            "source_line": 1179,
+            "source_file_sha256": "91748c68939d2ded3122814eae1a96a2a54e455e40e4359a34f825112c6bd29a",
+            "count": 1
+          },
+          {
+            "source_file": "core/generators/module_stitcher.py",
+            "source_line": 444,
+            "source_file_sha256": "99d70965bb10d277e6cd88f1541700cf7ce850131bf7e1c589546b733a276a2e",
+            "count": 2
+          },
+          {
+            "source_file": "core/generators/module_stitcher.py",
+            "source_line": 1123,
+            "source_file_sha256": "99d70965bb10d277e6cd88f1541700cf7ce850131bf7e1c589546b733a276a2e",
+            "count": 2
+          },
+          {
+            "source_file": "main.py",
+            "source_line": 5300,
+            "source_file_sha256": "1c64352368741354cc73344760de45e7ba99d6e1d9d4b76423d34f965b388a8a",
+            "count": 2
+          },
+          {
+            "source_file": "utils/action_predictor.py",
+            "source_line": 148,
+            "source_file_sha256": "a1df0a4a526ba9433fc57a7e065784738371ea2c60a4772cf0f95739886a00bc",
+            "count": 2
+          }
+        ],
+        "stub_sha256": {
+          "path": "scripts/live_gate_preflight_stub.py",
+          "sha256": "717ce5b3b1ce94230b3acbffa91e6c763fa4f9f5354daed44af7182487fcff84"
+        },
+        "driver_sha256": [
+          {
+            "path": "scripts/live_gate_preflight_profile_runner.py",
+            "sha256": "a158d1f5898f63c91f63e369bb594f03b91eed8ddbeb23c381483e1ffd1d4fbb"
+          },
+          {
+            "path": "scripts/mapping_pilot/row_runner.py",
+            "sha256": "a8bfcd52689d58ddf79f7c143b92d7c0b37c7351b5d48effaa84d54e5b50f5a6"
+          }
+        ],
+        "provenance": {
+          "run_id": "pf-fr11r-20261125T071401Z-df3caf65-01-E01",
+          "evidence_sha256": "00b2dbabfaf53ed7dd2826c9251c99f1a23e196f80ce276dbc734a5ebc7159cf"
+        }
+      },
+      "resume": {
+        "status": "measured-under-stub",
+        "required": true,
+        "fixture_id": "interior_tavern",
+        "party_size": 1,
+        "call_count": 9,
+        "call_sites": [
+          {
+            "source_file": "core/ai/action_handler.py",
+            "source_line": 1179,
+            "source_file_sha256": "91748c68939d2ded3122814eae1a96a2a54e455e40e4359a34f825112c6bd29a",
+            "count": 1
+          },
+          {
+            "source_file": "core/generators/module_stitcher.py",
+            "source_line": 444,
+            "source_file_sha256": "99d70965bb10d277e6cd88f1541700cf7ce850131bf7e1c589546b733a276a2e",
+            "count": 2
+          },
+          {
+            "source_file": "core/generators/module_stitcher.py",
+            "source_line": 1123,
+            "source_file_sha256": "99d70965bb10d277e6cd88f1541700cf7ce850131bf7e1c589546b733a276a2e",
+            "count": 2
+          },
+          {
+            "source_file": "main.py",
+            "source_line": 5300,
+            "source_file_sha256": "1c64352368741354cc73344760de45e7ba99d6e1d9d4b76423d34f965b388a8a",
+            "count": 2
+          },
+          {
+            "source_file": "utils/action_predictor.py",
+            "source_line": 148,
+            "source_file_sha256": "a1df0a4a526ba9433fc57a7e065784738371ea2c60a4772cf0f95739886a00bc",
+            "count": 2
+          }
+        ],
+        "stub_sha256": {
+          "path": "scripts/live_gate_preflight_stub.py",
+          "sha256": "717ce5b3b1ce94230b3acbffa91e6c763fa4f9f5354daed44af7182487fcff84"
+        },
+        "driver_sha256": [
+          {
+            "path": "scripts/live_gate_preflight_profile_runner.py",
+            "sha256": "a158d1f5898f63c91f63e369bb594f03b91eed8ddbeb23c381483e1ffd1d4fbb"
+          },
+          {
+            "path": "scripts/mapping_pilot/row_runner.py",
+            "sha256": "a8bfcd52689d58ddf79f7c143b92d7c0b37c7351b5d48effaa84d54e5b50f5a6"
+          }
+        ],
+        "provenance": {
+          "run_id": "pf-fr11r-20261125T071401Z-df3caf65-10-E01",
+          "evidence_sha256": "fa1e43e10f14a9658d65901dbbca7ec9b9b3e8821123daf2b076c133d6d75164"
+        }
+      }
+    },
+    {
+      "profile_id": "interior_tavern:p4",
+      "fixture_id": "interior_tavern",
+      "party_size": 4,
+      "planned_row_ids": [
+        "E07",
+        "E08",
+        "E09",
+        "E10",
+        "E11",
+        "E12"
+      ],
+      "source_binding_id": "sp3-frozen-row-and-script-manifest-v1",
+      "startup": {
+        "status": "measured-under-stub",
+        "required": true,
+        "fixture_id": "interior_tavern",
+        "party_size": 4,
+        "call_count": 9,
+        "call_sites": [
+          {
+            "source_file": "core/ai/action_handler.py",
+            "source_line": 1179,
+            "source_file_sha256": "91748c68939d2ded3122814eae1a96a2a54e455e40e4359a34f825112c6bd29a",
+            "count": 1
+          },
+          {
+            "source_file": "core/generators/module_stitcher.py",
+            "source_line": 444,
+            "source_file_sha256": "99d70965bb10d277e6cd88f1541700cf7ce850131bf7e1c589546b733a276a2e",
+            "count": 2
+          },
+          {
+            "source_file": "core/generators/module_stitcher.py",
+            "source_line": 1123,
+            "source_file_sha256": "99d70965bb10d277e6cd88f1541700cf7ce850131bf7e1c589546b733a276a2e",
+            "count": 2
+          },
+          {
+            "source_file": "main.py",
+            "source_line": 5300,
+            "source_file_sha256": "1c64352368741354cc73344760de45e7ba99d6e1d9d4b76423d34f965b388a8a",
+            "count": 2
+          },
+          {
+            "source_file": "utils/action_predictor.py",
+            "source_line": 148,
+            "source_file_sha256": "a1df0a4a526ba9433fc57a7e065784738371ea2c60a4772cf0f95739886a00bc",
+            "count": 2
+          }
+        ],
+        "stub_sha256": {
+          "path": "scripts/live_gate_preflight_stub.py",
+          "sha256": "717ce5b3b1ce94230b3acbffa91e6c763fa4f9f5354daed44af7182487fcff84"
+        },
+        "driver_sha256": [
+          {
+            "path": "scripts/live_gate_preflight_profile_runner.py",
+            "sha256": "a158d1f5898f63c91f63e369bb594f03b91eed8ddbeb23c381483e1ffd1d4fbb"
+          },
+          {
+            "path": "scripts/mapping_pilot/row_runner.py",
+            "sha256": "a8bfcd52689d58ddf79f7c143b92d7c0b37c7351b5d48effaa84d54e5b50f5a6"
+          }
+        ],
+        "provenance": {
+          "run_id": "pf-fr11r-20261125T071401Z-df3caf65-02-E07",
+          "evidence_sha256": "9d0717963471cc6d5a504f9e3dfd999f67775e449d8306b325daaef9dce5d05f"
+        }
+      },
+      "resume": {
+        "status": "measured-under-stub",
+        "required": true,
+        "fixture_id": "interior_tavern",
+        "party_size": 4,
+        "call_count": 9,
+        "call_sites": [
+          {
+            "source_file": "core/ai/action_handler.py",
+            "source_line": 1179,
+            "source_file_sha256": "91748c68939d2ded3122814eae1a96a2a54e455e40e4359a34f825112c6bd29a",
+            "count": 1
+          },
+          {
+            "source_file": "core/generators/module_stitcher.py",
+            "source_line": 444,
+            "source_file_sha256": "99d70965bb10d277e6cd88f1541700cf7ce850131bf7e1c589546b733a276a2e",
+            "count": 2
+          },
+          {
+            "source_file": "core/generators/module_stitcher.py",
+            "source_line": 1123,
+            "source_file_sha256": "99d70965bb10d277e6cd88f1541700cf7ce850131bf7e1c589546b733a276a2e",
+            "count": 2
+          },
+          {
+            "source_file": "main.py",
+            "source_line": 5300,
+            "source_file_sha256": "1c64352368741354cc73344760de45e7ba99d6e1d9d4b76423d34f965b388a8a",
+            "count": 2
+          },
+          {
+            "source_file": "utils/action_predictor.py",
+            "source_line": 148,
+            "source_file_sha256": "a1df0a4a526ba9433fc57a7e065784738371ea2c60a4772cf0f95739886a00bc",
+            "count": 2
+          }
+        ],
+        "stub_sha256": {
+          "path": "scripts/live_gate_preflight_stub.py",
+          "sha256": "717ce5b3b1ce94230b3acbffa91e6c763fa4f9f5354daed44af7182487fcff84"
+        },
+        "driver_sha256": [
+          {
+            "path": "scripts/live_gate_preflight_profile_runner.py",
+            "sha256": "a158d1f5898f63c91f63e369bb594f03b91eed8ddbeb23c381483e1ffd1d4fbb"
+          },
+          {
+            "path": "scripts/mapping_pilot/row_runner.py",
+            "sha256": "a8bfcd52689d58ddf79f7c143b92d7c0b37c7351b5d48effaa84d54e5b50f5a6"
+          }
+        ],
+        "provenance": {
+          "run_id": "pf-fr11r-20261125T071401Z-df3caf65-12-E07",
+          "evidence_sha256": "e4fc277291d9e73597bfe87901e009902982f557a605d77e19afad1a168b8a0a"
+        }
+      }
+    },
+    {
+      "profile_id": "landscape_village:p1",
+      "fixture_id": "landscape_village",
+      "party_size": 1,
+      "planned_row_ids": [
+        "E04",
+        "E05",
+        "E06"
+      ],
+      "source_binding_id": "sp3-frozen-row-and-script-manifest-v1",
+      "startup": {
+        "status": "measured-under-stub",
+        "required": true,
+        "fixture_id": "landscape_village",
+        "party_size": 1,
+        "call_count": 9,
+        "call_sites": [
+          {
+            "source_file": "core/ai/action_handler.py",
+            "source_line": 1179,
+            "source_file_sha256": "91748c68939d2ded3122814eae1a96a2a54e455e40e4359a34f825112c6bd29a",
+            "count": 1
+          },
+          {
+            "source_file": "core/generators/module_stitcher.py",
+            "source_line": 444,
+            "source_file_sha256": "99d70965bb10d277e6cd88f1541700cf7ce850131bf7e1c589546b733a276a2e",
+            "count": 2
+          },
+          {
+            "source_file": "core/generators/module_stitcher.py",
+            "source_line": 1123,
+            "source_file_sha256": "99d70965bb10d277e6cd88f1541700cf7ce850131bf7e1c589546b733a276a2e",
+            "count": 2
+          },
+          {
+            "source_file": "main.py",
+            "source_line": 5300,
+            "source_file_sha256": "1c64352368741354cc73344760de45e7ba99d6e1d9d4b76423d34f965b388a8a",
+            "count": 2
+          },
+          {
+            "source_file": "utils/action_predictor.py",
+            "source_line": 148,
+            "source_file_sha256": "a1df0a4a526ba9433fc57a7e065784738371ea2c60a4772cf0f95739886a00bc",
+            "count": 2
+          }
+        ],
+        "stub_sha256": {
+          "path": "scripts/live_gate_preflight_stub.py",
+          "sha256": "717ce5b3b1ce94230b3acbffa91e6c763fa4f9f5354daed44af7182487fcff84"
+        },
+        "driver_sha256": [
+          {
+            "path": "scripts/live_gate_preflight_profile_runner.py",
+            "sha256": "a158d1f5898f63c91f63e369bb594f03b91eed8ddbeb23c381483e1ffd1d4fbb"
+          },
+          {
+            "path": "scripts/mapping_pilot/row_runner.py",
+            "sha256": "a8bfcd52689d58ddf79f7c143b92d7c0b37c7351b5d48effaa84d54e5b50f5a6"
+          }
+        ],
+        "provenance": {
+          "run_id": "pf-fr11r-20261125T071401Z-df3caf65-03-E04",
+          "evidence_sha256": "152bb01ff4b2afb2d15e3f95ab13f570f69dde69907df9021ee262d659f586ae"
+        }
+      },
+      "resume": {
+        "status": "measured-under-stub",
+        "required": false,
+        "fixture_id": "landscape_village",
+        "party_size": 1,
+        "call_count": 9,
+        "call_sites": [
+          {
+            "source_file": "core/ai/action_handler.py",
+            "source_line": 1179,
+            "source_file_sha256": "91748c68939d2ded3122814eae1a96a2a54e455e40e4359a34f825112c6bd29a",
+            "count": 1
+          },
+          {
+            "source_file": "core/generators/module_stitcher.py",
+            "source_line": 444,
+            "source_file_sha256": "99d70965bb10d277e6cd88f1541700cf7ce850131bf7e1c589546b733a276a2e",
+            "count": 2
+          },
+          {
+            "source_file": "core/generators/module_stitcher.py",
+            "source_line": 1123,
+            "source_file_sha256": "99d70965bb10d277e6cd88f1541700cf7ce850131bf7e1c589546b733a276a2e",
+            "count": 2
+          },
+          {
+            "source_file": "main.py",
+            "source_line": 5300,
+            "source_file_sha256": "1c64352368741354cc73344760de45e7ba99d6e1d9d4b76423d34f965b388a8a",
+            "count": 2
+          },
+          {
+            "source_file": "utils/action_predictor.py",
+            "source_line": 148,
+            "source_file_sha256": "a1df0a4a526ba9433fc57a7e065784738371ea2c60a4772cf0f95739886a00bc",
+            "count": 2
+          }
+        ],
+        "stub_sha256": {
+          "path": "scripts/live_gate_preflight_stub.py",
+          "sha256": "717ce5b3b1ce94230b3acbffa91e6c763fa4f9f5354daed44af7182487fcff84"
+        },
+        "driver_sha256": [
+          {
+            "path": "scripts/live_gate_preflight_profile_runner.py",
+            "sha256": "a158d1f5898f63c91f63e369bb594f03b91eed8ddbeb23c381483e1ffd1d4fbb"
+          },
+          {
+            "path": "scripts/mapping_pilot/row_runner.py",
+            "sha256": "a8bfcd52689d58ddf79f7c143b92d7c0b37c7351b5d48effaa84d54e5b50f5a6"
+          }
+        ],
+        "provenance": {
+          "run_id": "pf-fr11r-20261125T071401Z-df3caf65-14-E04",
+          "evidence_sha256": "f54cde7702d4f87452d30fad9fa6700aa15c5965ec4e2e02fc2c88374b1a3b01"
+        }
+      }
+    },
+    {
+      "profile_id": "landscape_village:p4",
+      "fixture_id": "landscape_village",
+      "party_size": 4,
+      "planned_row_ids": [
+        "E13",
+        "E14",
+        "E15",
+        "E16",
+        "E17",
+        "E18"
+      ],
+      "source_binding_id": "sp3-frozen-row-and-script-manifest-v1",
+      "startup": {
+        "status": "measured-under-stub",
+        "required": true,
+        "fixture_id": "landscape_village",
+        "party_size": 4,
+        "call_count": 9,
+        "call_sites": [
+          {
+            "source_file": "core/ai/action_handler.py",
+            "source_line": 1179,
+            "source_file_sha256": "91748c68939d2ded3122814eae1a96a2a54e455e40e4359a34f825112c6bd29a",
+            "count": 1
+          },
+          {
+            "source_file": "core/generators/module_stitcher.py",
+            "source_line": 444,
+            "source_file_sha256": "99d70965bb10d277e6cd88f1541700cf7ce850131bf7e1c589546b733a276a2e",
+            "count": 2
+          },
+          {
+            "source_file": "core/generators/module_stitcher.py",
+            "source_line": 1123,
+            "source_file_sha256": "99d70965bb10d277e6cd88f1541700cf7ce850131bf7e1c589546b733a276a2e",
+            "count": 2
+          },
+          {
+            "source_file": "main.py",
+            "source_line": 5300,
+            "source_file_sha256": "1c64352368741354cc73344760de45e7ba99d6e1d9d4b76423d34f965b388a8a",
+            "count": 2
+          },
+          {
+            "source_file": "utils/action_predictor.py",
+            "source_line": 148,
+            "source_file_sha256": "a1df0a4a526ba9433fc57a7e065784738371ea2c60a4772cf0f95739886a00bc",
+            "count": 2
+          }
+        ],
+        "stub_sha256": {
+          "path": "scripts/live_gate_preflight_stub.py",
+          "sha256": "717ce5b3b1ce94230b3acbffa91e6c763fa4f9f5354daed44af7182487fcff84"
+        },
+        "driver_sha256": [
+          {
+            "path": "scripts/live_gate_preflight_profile_runner.py",
+            "sha256": "a158d1f5898f63c91f63e369bb594f03b91eed8ddbeb23c381483e1ffd1d4fbb"
+          },
+          {
+            "path": "scripts/mapping_pilot/row_runner.py",
+            "sha256": "a8bfcd52689d58ddf79f7c143b92d7c0b37c7351b5d48effaa84d54e5b50f5a6"
+          }
+        ],
+        "provenance": {
+          "run_id": "pf-fr11r-20261125T071401Z-df3caf65-04-E13",
+          "evidence_sha256": "d6b264f8d191457eafc2a48d81ce042abfe085af10c997147ddd3d96704c0433"
+        }
+      },
+      "resume": {
+        "status": "measured-under-stub",
+        "required": false,
+        "fixture_id": "landscape_village",
+        "party_size": 4,
+        "call_count": 9,
+        "call_sites": [
+          {
+            "source_file": "core/ai/action_handler.py",
+            "source_line": 1179,
+            "source_file_sha256": "91748c68939d2ded3122814eae1a96a2a54e455e40e4359a34f825112c6bd29a",
+            "count": 1
+          },
+          {
+            "source_file": "core/generators/module_stitcher.py",
+            "source_line": 444,
+            "source_file_sha256": "99d70965bb10d277e6cd88f1541700cf7ce850131bf7e1c589546b733a276a2e",
+            "count": 2
+          },
+          {
+            "source_file": "core/generators/module_stitcher.py",
+            "source_line": 1123,
+            "source_file_sha256": "99d70965bb10d277e6cd88f1541700cf7ce850131bf7e1c589546b733a276a2e",
+            "count": 2
+          },
+          {
+            "source_file": "main.py",
+            "source_line": 5300,
+            "source_file_sha256": "1c64352368741354cc73344760de45e7ba99d6e1d9d4b76423d34f965b388a8a",
+            "count": 2
+          },
+          {
+            "source_file": "utils/action_predictor.py",
+            "source_line": 148,
+            "source_file_sha256": "a1df0a4a526ba9433fc57a7e065784738371ea2c60a4772cf0f95739886a00bc",
+            "count": 2
+          }
+        ],
+        "stub_sha256": {
+          "path": "scripts/live_gate_preflight_stub.py",
+          "sha256": "717ce5b3b1ce94230b3acbffa91e6c763fa4f9f5354daed44af7182487fcff84"
+        },
+        "driver_sha256": [
+          {
+            "path": "scripts/live_gate_preflight_profile_runner.py",
+            "sha256": "a158d1f5898f63c91f63e369bb594f03b91eed8ddbeb23c381483e1ffd1d4fbb"
+          },
+          {
+            "path": "scripts/mapping_pilot/row_runner.py",
+            "sha256": "a8bfcd52689d58ddf79f7c143b92d7c0b37c7351b5d48effaa84d54e5b50f5a6"
+          }
+        ],
+        "provenance": {
+          "run_id": "pf-fr11r-20261125T071401Z-df3caf65-16-E13",
+          "evidence_sha256": "9b69ad7fcf3d5dc696a9d6363c9ede4a61058cb6a930b1e5b432372a133425c5"
+        }
+      }
+    },
+    {
+      "profile_id": "transition_tower_approach:p1",
+      "fixture_id": "transition_tower_approach",
+      "party_size": 1,
+      "planned_row_ids": [
+        "E04",
+        "E05",
+        "E06"
+      ],
+      "source_binding_id": "sp3-frozen-row-and-script-manifest-v1",
+      "startup": {
+        "status": "measured-under-stub",
+        "required": true,
+        "fixture_id": "transition_tower_approach",
+        "party_size": 1,
+        "call_count": 9,
+        "call_sites": [
+          {
+            "source_file": "core/ai/action_handler.py",
+            "source_line": 1179,
+            "source_file_sha256": "91748c68939d2ded3122814eae1a96a2a54e455e40e4359a34f825112c6bd29a",
+            "count": 1
+          },
+          {
+            "source_file": "core/generators/module_stitcher.py",
+            "source_line": 444,
+            "source_file_sha256": "99d70965bb10d277e6cd88f1541700cf7ce850131bf7e1c589546b733a276a2e",
+            "count": 2
+          },
+          {
+            "source_file": "core/generators/module_stitcher.py",
+            "source_line": 1123,
+            "source_file_sha256": "99d70965bb10d277e6cd88f1541700cf7ce850131bf7e1c589546b733a276a2e",
+            "count": 2
+          },
+          {
+            "source_file": "main.py",
+            "source_line": 5300,
+            "source_file_sha256": "1c64352368741354cc73344760de45e7ba99d6e1d9d4b76423d34f965b388a8a",
+            "count": 2
+          },
+          {
+            "source_file": "utils/action_predictor.py",
+            "source_line": 148,
+            "source_file_sha256": "a1df0a4a526ba9433fc57a7e065784738371ea2c60a4772cf0f95739886a00bc",
+            "count": 2
+          }
+        ],
+        "stub_sha256": {
+          "path": "scripts/live_gate_preflight_stub.py",
+          "sha256": "717ce5b3b1ce94230b3acbffa91e6c763fa4f9f5354daed44af7182487fcff84"
+        },
+        "driver_sha256": [
+          {
+            "path": "scripts/live_gate_preflight_profile_runner.py",
+            "sha256": "a158d1f5898f63c91f63e369bb594f03b91eed8ddbeb23c381483e1ffd1d4fbb"
+          },
+          {
+            "path": "scripts/mapping_pilot/row_runner.py",
+            "sha256": "a8bfcd52689d58ddf79f7c143b92d7c0b37c7351b5d48effaa84d54e5b50f5a6"
+          }
+        ],
+        "provenance": {
+          "run_id": "pf-fr11r-20261125T071401Z-df3caf65-05-E04",
+          "evidence_sha256": "b6d03fbcf7c9fbcd0b37fbcdea1e6773ab8f961e3519693473b1c09b39c6543d"
+        }
+      },
+      "resume": {
+        "status": "measured-under-stub",
+        "required": false,
+        "fixture_id": "transition_tower_approach",
+        "party_size": 1,
+        "call_count": 9,
+        "call_sites": [
+          {
+            "source_file": "core/ai/action_handler.py",
+            "source_line": 1179,
+            "source_file_sha256": "91748c68939d2ded3122814eae1a96a2a54e455e40e4359a34f825112c6bd29a",
+            "count": 1
+          },
+          {
+            "source_file": "core/generators/module_stitcher.py",
+            "source_line": 444,
+            "source_file_sha256": "99d70965bb10d277e6cd88f1541700cf7ce850131bf7e1c589546b733a276a2e",
+            "count": 2
+          },
+          {
+            "source_file": "core/generators/module_stitcher.py",
+            "source_line": 1123,
+            "source_file_sha256": "99d70965bb10d277e6cd88f1541700cf7ce850131bf7e1c589546b733a276a2e",
+            "count": 2
+          },
+          {
+            "source_file": "main.py",
+            "source_line": 5300,
+            "source_file_sha256": "1c64352368741354cc73344760de45e7ba99d6e1d9d4b76423d34f965b388a8a",
+            "count": 2
+          },
+          {
+            "source_file": "utils/action_predictor.py",
+            "source_line": 148,
+            "source_file_sha256": "a1df0a4a526ba9433fc57a7e065784738371ea2c60a4772cf0f95739886a00bc",
+            "count": 2
+          }
+        ],
+        "stub_sha256": {
+          "path": "scripts/live_gate_preflight_stub.py",
+          "sha256": "717ce5b3b1ce94230b3acbffa91e6c763fa4f9f5354daed44af7182487fcff84"
+        },
+        "driver_sha256": [
+          {
+            "path": "scripts/live_gate_preflight_profile_runner.py",
+            "sha256": "a158d1f5898f63c91f63e369bb594f03b91eed8ddbeb23c381483e1ffd1d4fbb"
+          },
+          {
+            "path": "scripts/mapping_pilot/row_runner.py",
+            "sha256": "a8bfcd52689d58ddf79f7c143b92d7c0b37c7351b5d48effaa84d54e5b50f5a6"
+          }
+        ],
+        "provenance": {
+          "run_id": "pf-fr11r-20261125T071401Z-df3caf65-18-E04",
+          "evidence_sha256": "10d4a8ba455ac717960d08e83833593391feb0a1bc8991134c604b368b250099"
+        }
+      }
+    },
+    {
+      "profile_id": "transition_tower_approach:p4",
+      "fixture_id": "transition_tower_approach",
+      "party_size": 4,
+      "planned_row_ids": [
+        "E13",
+        "E14",
+        "E15",
+        "E16",
+        "E17",
+        "E18"
+      ],
+      "source_binding_id": "sp3-frozen-row-and-script-manifest-v1",
+      "startup": {
+        "status": "measured-under-stub",
+        "required": true,
+        "fixture_id": "transition_tower_approach",
+        "party_size": 4,
+        "call_count": 9,
+        "call_sites": [
+          {
+            "source_file": "core/ai/action_handler.py",
+            "source_line": 1179,
+            "source_file_sha256": "91748c68939d2ded3122814eae1a96a2a54e455e40e4359a34f825112c6bd29a",
+            "count": 1
+          },
+          {
+            "source_file": "core/generators/module_stitcher.py",
+            "source_line": 444,
+            "source_file_sha256": "99d70965bb10d277e6cd88f1541700cf7ce850131bf7e1c589546b733a276a2e",
+            "count": 2
+          },
+          {
+            "source_file": "core/generators/module_stitcher.py",
+            "source_line": 1123,
+            "source_file_sha256": "99d70965bb10d277e6cd88f1541700cf7ce850131bf7e1c589546b733a276a2e",
+            "count": 2
+          },
+          {
+            "source_file": "main.py",
+            "source_line": 5300,
+            "source_file_sha256": "1c64352368741354cc73344760de45e7ba99d6e1d9d4b76423d34f965b388a8a",
+            "count": 2
+          },
+          {
+            "source_file": "utils/action_predictor.py",
+            "source_line": 148,
+            "source_file_sha256": "a1df0a4a526ba9433fc57a7e065784738371ea2c60a4772cf0f95739886a00bc",
+            "count": 2
+          }
+        ],
+        "stub_sha256": {
+          "path": "scripts/live_gate_preflight_stub.py",
+          "sha256": "717ce5b3b1ce94230b3acbffa91e6c763fa4f9f5354daed44af7182487fcff84"
+        },
+        "driver_sha256": [
+          {
+            "path": "scripts/live_gate_preflight_profile_runner.py",
+            "sha256": "a158d1f5898f63c91f63e369bb594f03b91eed8ddbeb23c381483e1ffd1d4fbb"
+          },
+          {
+            "path": "scripts/mapping_pilot/row_runner.py",
+            "sha256": "a8bfcd52689d58ddf79f7c143b92d7c0b37c7351b5d48effaa84d54e5b50f5a6"
+          }
+        ],
+        "provenance": {
+          "run_id": "pf-fr11r-20261125T071401Z-df3caf65-06-E13",
+          "evidence_sha256": "63d6552d67a7174cf18b19cc2283a5adf31cec932619cab68a55f691387c884d"
+        }
+      },
+      "resume": {
+        "status": "measured-under-stub",
+        "required": false,
+        "fixture_id": "transition_tower_approach",
+        "party_size": 4,
+        "call_count": 9,
+        "call_sites": [
+          {
+            "source_file": "core/ai/action_handler.py",
+            "source_line": 1179,
+            "source_file_sha256": "91748c68939d2ded3122814eae1a96a2a54e455e40e4359a34f825112c6bd29a",
+            "count": 1
+          },
+          {
+            "source_file": "core/generators/module_stitcher.py",
+            "source_line": 444,
+            "source_file_sha256": "99d70965bb10d277e6cd88f1541700cf7ce850131bf7e1c589546b733a276a2e",
+            "count": 2
+          },
+          {
+            "source_file": "core/generators/module_stitcher.py",
+            "source_line": 1123,
+            "source_file_sha256": "99d70965bb10d277e6cd88f1541700cf7ce850131bf7e1c589546b733a276a2e",
+            "count": 2
+          },
+          {
+            "source_file": "main.py",
+            "source_line": 5300,
+            "source_file_sha256": "1c64352368741354cc73344760de45e7ba99d6e1d9d4b76423d34f965b388a8a",
+            "count": 2
+          },
+          {
+            "source_file": "utils/action_predictor.py",
+            "source_line": 148,
+            "source_file_sha256": "a1df0a4a526ba9433fc57a7e065784738371ea2c60a4772cf0f95739886a00bc",
+            "count": 2
+          }
+        ],
+        "stub_sha256": {
+          "path": "scripts/live_gate_preflight_stub.py",
+          "sha256": "717ce5b3b1ce94230b3acbffa91e6c763fa4f9f5354daed44af7182487fcff84"
+        },
+        "driver_sha256": [
+          {
+            "path": "scripts/live_gate_preflight_profile_runner.py",
+            "sha256": "a158d1f5898f63c91f63e369bb594f03b91eed8ddbeb23c381483e1ffd1d4fbb"
+          },
+          {
+            "path": "scripts/mapping_pilot/row_runner.py",
+            "sha256": "a8bfcd52689d58ddf79f7c143b92d7c0b37c7351b5d48effaa84d54e5b50f5a6"
+          }
+        ],
+        "provenance": {
+          "run_id": "pf-fr11r-20261125T071401Z-df3caf65-20-E13",
+          "evidence_sha256": "dfbb9bef81ba98dd7be314fc40ec47c97bd9f81860e051e30da5e724b28c0c6e"
+        }
+      }
+    },
+    {
+      "profile_id": "combat_stage_tavern_zones:p1",
+      "fixture_id": "combat_stage_tavern_zones",
+      "party_size": 1,
+      "planned_row_ids": [
+        "C01",
+        "C02",
+        "C03",
+        "C04"
+      ],
+      "source_binding_id": "sp3-frozen-row-and-script-manifest-v1",
+      "startup": {
+        "status": "measured-under-stub",
+        "required": true,
+        "fixture_id": "combat_stage_tavern_zones",
+        "party_size": 1,
+        "call_count": 2,
+        "call_sites": [
+          {
+            "source_file": "core/combat/combat_manager.py",
+            "source_line": 1450,
+            "source_file_sha256": "ef67a68021ff4756f0c266340d0f34f2e42973c516835a59cf0e41dc5d68dc2f",
+            "count": 1
+          },
+          {
+            "source_file": "core/combat/combat_manager.py",
+            "source_line": 1593,
+            "source_file_sha256": "ef67a68021ff4756f0c266340d0f34f2e42973c516835a59cf0e41dc5d68dc2f",
+            "count": 1
+          }
+        ],
+        "stub_sha256": {
+          "path": "scripts/live_gate_preflight_stub.py",
+          "sha256": "717ce5b3b1ce94230b3acbffa91e6c763fa4f9f5354daed44af7182487fcff84"
+        },
+        "driver_sha256": [
+          {
+            "path": "scripts/live_gate_preflight_profile_runner.py",
+            "sha256": "a158d1f5898f63c91f63e369bb594f03b91eed8ddbeb23c381483e1ffd1d4fbb"
+          },
+          {
+            "path": "scripts/mapping_pilot/row_runner.py",
+            "sha256": "a8bfcd52689d58ddf79f7c143b92d7c0b37c7351b5d48effaa84d54e5b50f5a6"
+          }
+        ],
+        "provenance": {
+          "run_id": "pf-fr11r-20261125T071401Z-df3caf65-07-C01",
+          "evidence_sha256": "a78d9c3d1c6f51e09e9b61382ee99b1b90d1cc022867a8432c8ac21fa67769b5"
+        }
+      },
+      "resume": {
+        "status": "MISSING",
+        "required": false,
+        "reason": "NOT APPLICABLE: combat rows C01-C08 use scripts/combat.json, which defines no lifecycle, save, restart or resume (plans/v2-mapping-pilot-prereg/counterbalance.json:28; plans/v2-mapping-pilot-prereg/README.md:140-148); no resume profile was built or inferred."
+      }
+    },
+    {
+      "profile_id": "combat_stage_tavern_zones:p4",
+      "fixture_id": "combat_stage_tavern_zones",
+      "party_size": 4,
+      "planned_row_ids": [
+        "C05",
+        "C06",
+        "C07",
+        "C08"
+      ],
+      "source_binding_id": "sp3-frozen-row-and-script-manifest-v1",
+      "startup": {
+        "status": "measured-under-stub",
+        "required": true,
+        "fixture_id": "combat_stage_tavern_zones",
+        "party_size": 4,
+        "call_count": 2,
+        "call_sites": [
+          {
+            "source_file": "core/combat/combat_manager.py",
+            "source_line": 1450,
+            "source_file_sha256": "ef67a68021ff4756f0c266340d0f34f2e42973c516835a59cf0e41dc5d68dc2f",
+            "count": 1
+          },
+          {
+            "source_file": "core/combat/combat_manager.py",
+            "source_line": 1593,
+            "source_file_sha256": "ef67a68021ff4756f0c266340d0f34f2e42973c516835a59cf0e41dc5d68dc2f",
+            "count": 1
+          }
+        ],
+        "stub_sha256": {
+          "path": "scripts/live_gate_preflight_stub.py",
+          "sha256": "717ce5b3b1ce94230b3acbffa91e6c763fa4f9f5354daed44af7182487fcff84"
+        },
+        "driver_sha256": [
+          {
+            "path": "scripts/live_gate_preflight_profile_runner.py",
+            "sha256": "a158d1f5898f63c91f63e369bb594f03b91eed8ddbeb23c381483e1ffd1d4fbb"
+          },
+          {
+            "path": "scripts/mapping_pilot/row_runner.py",
+            "sha256": "a8bfcd52689d58ddf79f7c143b92d7c0b37c7351b5d48effaa84d54e5b50f5a6"
+          }
+        ],
+        "provenance": {
+          "run_id": "pf-fr11r-20261125T071401Z-df3caf65-08-C05",
+          "evidence_sha256": "3fb9004a605226b4a441e5be87d848be6aee2273e025d82fdc41a6749f437822"
+        }
+      },
+      "resume": {
+        "status": "MISSING",
+        "required": false,
+        "reason": "NOT APPLICABLE: combat rows C01-C08 use scripts/combat.json, which defines no lifecycle, save, restart or resume (plans/v2-mapping-pilot-prereg/counterbalance.json:28; plans/v2-mapping-pilot-prereg/README.md:140-148); no resume profile was built or inferred."
+      }
+    }
+  ]
+}

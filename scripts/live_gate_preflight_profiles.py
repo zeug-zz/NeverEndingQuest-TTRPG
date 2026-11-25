@@ -1,0 +1,3675 @@
+# SPDX-FileCopyrightText: 2024 MoonlightByte
+# SPDX-License-Identifier: Fair-Source-1.0
+# License: See LICENSE file in the repository root.
+# This software is subject to the terms of the Fair Source License.
+
+"""Versioned, source-bound startup/resume profile validation for live preflight."""
+
+from __future__ import annotations
+
+import copy
+import hashlib
+import ipaddress
+import json
+import os
+import re
+import signal
+import stat
+from collections.abc import Mapping
+from pathlib import Path, PurePosixPath
+from typing import Any
+
+from scripts.mapping_pilot.manifest import verify_manifest
+from scripts.live_gate_preflight_safety import (
+    GUARD_EVENT_ROOT,
+    SANDBOX_PROVIDER_KEY_PLACEHOLDER,
+    expected_guarded_pythonpath,
+    validate_guard_event_records,
+)
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROFILE_PATH = Path(__file__).with_name("live_gate_preflight_profiles.json")
+PREREG_ROOT = Path("plans/v2-mapping-pilot-prereg")
+PROFILE_STATE_SOURCE = Path(
+    "openspec/changes/v2-mapping-pilot-execution/reports/sp4-primary-report.md"
+)
+PROFILE_SET_ID = "live-gate-preflight-call-profiles-v1"
+AUTHORIZATION_RULING_ID = "neq-w1-fr11-profiles-characterization-20261112"
+SCHEMA_VERSION = 1
+EXPECTED_MANIFEST_SHA256 = "49d600b9a7080253d99aa66a725bd981a594afbc3fde76b5df70253219d59c07"
+EXPECTED_COUNTERBALANCE_SHA256 = "ef680c1c9049d9c570c66a1fb337fcca664f87abbd4dcca81e6133be2539ff70"
+EXPECTED_PROFILE_STATE_SHA256 = "27367f4b48865c601c54b6013fa67d40a6119215cd9114275f3151c505fa10a5"
+REPORTED_PROFILE_REPORT_SHA256 = "75f4e9304652ebecc46390d94daa3f57f7a6eeba77840e8140610a3da2b702db"
+
+FIXTURE_IDS = (
+    "interior_tavern",
+    "landscape_village",
+    "transition_tower_approach",
+    "combat_stage_tavern_zones",
+)
+PARTY_SIZES = (1, 4)
+SCRIPT_PATHS = {
+    "scripts/interior.json": "interior.json",
+    "scripts/landscape.json": "landscape.json",
+    "scripts/combat.json": "combat.json",
+}
+_SHA = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
+_SECRET_TEXT = re.compile(r"(?:API[_-]?KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL)", re.IGNORECASE)
+_SAFE_TASK = re.compile(r"^[A-Za-z0-9_.:-]{1,80}$")
+_SAFE_RUN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
+_PROFILE_EVIDENCE_MAX_BYTES = 512_000
+_PROFILE_WORKING_DIRECTORY = "tmp/combat_capture"
+# Pre-identity evidence is accepted only for these independently validated,
+# source-bound records. Each tuple pins path, bytes, profile, fixture, party,
+# lifecycle, source, planned row, arm, and run; the normal canary/census checks
+# below still validate every accepted record.
+_HISTORIC_PROFILE_EVIDENCE = (
+    (
+        "tmp/router-rollout/live-gate-preflight/profile-characterization/"
+        "fr11-tower-p1-startup-01/profile-evidence.json",
+        "8908c2e325e0e2289789d4baeda721a553c809e1c9f5b4d99086f0f9f8b71a19",
+        "transition_tower_approach:p1",
+        "transition_tower_approach",
+        1,
+        "startup",
+        "7e874277c6bd69de2e13e1282ea0f8a0cda10290",
+        "E04",
+        "D",
+        "fr11-tower-p1-startup-01",
+    ),
+    (
+        "tmp/router-rollout/live-gate-preflight/profile-characterization/"
+        "fr11-tower-p4-startup-01/profile-evidence.json",
+        "ee0fe4018769f3e125dc3bfe7ce228111088c55027b2fa8ae6417ef33c867046",
+        "transition_tower_approach:p4",
+        "transition_tower_approach",
+        4,
+        "startup",
+        "021a55463ec86d76eeb6fa2b9ca5fc458f1725b6",
+        "E13",
+        "D",
+        "fr11-tower-p4-startup-01",
+    ),
+    (
+        "tmp/router-rollout/live-gate-preflight/profile-characterization/"
+        "fr11-combat-p4-startup-01/profile-evidence.json",
+        "40f328d3d5c877a56aa13065585790081f9abcca0a6f679ac1b047d80b47f1c9",
+        "combat_stage_tavern_zones:p4",
+        "combat_stage_tavern_zones",
+        4,
+        "startup",
+        "17d63b0787ca3048e9d181432bbca9c89aa4105e",
+        "C05",
+        "D",
+        "fr11-combat-p4-startup-01",
+    ),
+)
+
+
+class ProfileValidationError(ValueError):
+    """Raised when profiles, source bindings, or planned-row coverage are invalid."""
+
+
+def load_profile_coverage(
+    profile_path: str | Path = PROFILE_PATH,
+    *,
+    project_root: str | Path = PROJECT_ROOT,
+) -> dict[str, Any]:
+    """Read, validate, and summarize the frozen profile declaration."""
+    root = Path(project_root).resolve(strict=True)
+    requested_path = Path(profile_path)
+    if requested_path.is_absolute():
+        try:
+            requested_path = requested_path.relative_to(root)
+        except ValueError as exc:
+            raise ProfileValidationError("profile declaration path escapes project") from exc
+    path = _safe_source_path(root, requested_path, "profile declaration")
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ProfileValidationError("profile declaration cannot be read") from exc
+    return validate_profile_document(document, project_root=root)
+
+
+def validate_profile_document(
+    document: Any,
+    *,
+    project_root: str | Path = PROJECT_ROOT,
+) -> dict[str, Any]:
+    """Validate all eight fixture-party pairs against the frozen 26-row source.
+
+    Measured declarations are call-site-content bound (not commit-SHA bound);
+    validation checks shape and safe repository-relative paths only. Matching
+    against an observed run is ``match_lifecycle_declaration``.
+    """
+    root = Path(project_root).resolve(strict=True)
+    if not isinstance(document, Mapping):
+        raise ProfileValidationError("profile declaration must be an object")
+    _require_keys(
+        document,
+        {"schema_version", "profile_set_id", "authorization_ruling_id", "source_binding", "profiles"},
+        "profile declaration",
+    )
+    if (
+        type(document.get("schema_version")) is not int
+        or document.get("schema_version") != SCHEMA_VERSION
+    ):
+        raise ProfileValidationError("unsupported profile schema version")
+    if document.get("profile_set_id") != PROFILE_SET_ID:
+        raise ProfileValidationError("unsupported profile set")
+    if document.get("authorization_ruling_id") != AUTHORIZATION_RULING_ID:
+        raise ProfileValidationError("profile authorization ruling binding is invalid")
+
+    source_binding = document.get("source_binding")
+    _require_keys(
+        source_binding,
+        {
+            "manifest_path",
+            "manifest_sha256",
+            "counterbalance_path",
+            "counterbalance_sha256",
+            "profile_state_source_path",
+            "profile_state_source_sha256",
+            "reported_profile_report_sha256",
+            "profile_state_locator",
+        },
+        "source binding",
+    )
+    _validate_source_binding(source_binding, root)
+    expected_rows = _load_expected_row_pairs(root)
+
+    raw_profiles = document.get("profiles")
+    if not isinstance(raw_profiles, list) or len(raw_profiles) != 8:
+        raise ProfileValidationError("exactly eight fixture-party profile entries are required")
+
+    seen_pairs: set[tuple[str, int]] = set()
+    by_row: dict[str, list[str]] = {row_id: [] for row_id in expected_rows["planned_row_ids"]}
+    pair_statuses: dict[str, dict[str, str]] = {}
+    profiles_by_id: dict[str, Mapping[str, Any]] = {}
+    for profile in raw_profiles:
+        _require_keys(
+            profile,
+            {"profile_id", "fixture_id", "party_size", "planned_row_ids", "source_binding_id", "startup", "resume"},
+            "fixture-party profile",
+        )
+        fixture_id = profile.get("fixture_id")
+        party_size = profile.get("party_size")
+        if (
+            not isinstance(fixture_id, str)
+            or fixture_id not in FIXTURE_IDS
+            or type(party_size) is not int
+            or party_size not in PARTY_SIZES
+        ):
+            raise ProfileValidationError("unsupported fixture-party profile entry")
+        pair = (fixture_id, party_size)
+        if pair in seen_pairs:
+            raise ProfileValidationError("duplicate fixture-party profile entry")
+        seen_pairs.add(pair)
+        expected_profile_id = "%s:p%d" % pair
+        if profile.get("profile_id") != expected_profile_id:
+            raise ProfileValidationError("fixture-party profile identity is invalid")
+        if profile.get("source_binding_id") != "sp3-frozen-row-and-script-manifest-v1":
+            raise ProfileValidationError("fixture-party profile source binding is invalid")
+
+        row_ids = profile.get("planned_row_ids")
+        expected_pair_rows = expected_rows["pair_rows"].get(pair)
+        if not isinstance(row_ids, list) or row_ids != expected_pair_rows:
+            raise ProfileValidationError("fixture-party planned-row binding differs from frozen source")
+        for row_id in row_ids:
+            if row_id not in by_row or row_id.startswith("R"):
+                raise ProfileValidationError("profile references a reserve or unsupported row")
+            by_row[row_id].append(expected_profile_id)
+
+        startup_status = _validate_lifecycle_profile(
+            profile.get("startup"),
+            fixture_id=fixture_id,
+            party_size=party_size,
+            lifecycle="startup",
+        )
+        resume_status = _validate_lifecycle_profile(
+            profile.get("resume"),
+            fixture_id=fixture_id,
+            party_size=party_size,
+            lifecycle="resume",
+        )
+        pair_statuses[expected_profile_id] = {
+            "startup": startup_status,
+            "resume": resume_status,
+        }
+        profiles_by_id[expected_profile_id] = profile
+
+    expected_pair_keys = {
+        (fixture_id, party_size)
+        for fixture_id in FIXTURE_IDS
+        for party_size in PARTY_SIZES
+    }
+    if seen_pairs != expected_pair_keys:
+        raise ProfileValidationError("fixture-party profile pair coverage is incomplete")
+    if set(expected_rows["pair_rows"]) != expected_pair_keys:
+        raise ProfileValidationError("frozen source does not cover the required eight pairs")
+
+    unverified_rows: list[str] = []
+    for row_id, profile_ids in by_row.items():
+        if not profile_ids:
+            raise ProfileValidationError("planned row has no fixture-party profile binding")
+        if any(
+            profiles_by_id[profile_id][lifecycle].get("required") is True
+            and pair_statuses[profile_id][lifecycle] != "measured-under-stub"
+            for profile_id in profile_ids
+            for lifecycle in ("startup", "resume")
+        ):
+            unverified_rows.append(row_id)
+
+    all_planned_rows = expected_rows["planned_row_ids"]
+    if sorted(by_row) != sorted(all_planned_rows):
+        raise ProfileValidationError("planned-row profile coverage is incomplete")
+    missing_pairs = [
+        profile_id
+        for profile_id, states in pair_statuses.items()
+        if any(
+            profiles_by_id[profile_id][lifecycle].get("required") is True
+            and status == "MISSING"
+            for lifecycle, status in states.items()
+        )
+    ]
+    blockers = ["profile coverage is not a booking authorization"]
+    blockers.extend("missing lifecycle measurement: " + item for item in missing_pairs)
+    return {
+        "profile_set_id": PROFILE_SET_ID,
+        "schema_version": SCHEMA_VERSION,
+        "structural_row_coverage_complete": True,
+        "planned_row_count": len(all_planned_rows),
+        "planned_row_ids": list(all_planned_rows),
+        "fixture_party_pair_count": len(seen_pairs),
+        "profile_pair_ids": sorted(pair_statuses),
+        "unverified_row_ids": unverified_rows,
+        "replacement_only_rows_activated": [],
+        "measured_lifecycle_complete": not missing_pairs,
+        "booking_eligible": False,
+        "booking_blockers": blockers,
+    }
+
+
+def _validate_source_binding(source_binding: Mapping[str, Any], root: Path) -> None:
+    expected = {
+        "manifest_path": (PREREG_ROOT / "MANIFEST.sha256").as_posix(),
+        "manifest_sha256": EXPECTED_MANIFEST_SHA256,
+        "counterbalance_path": (PREREG_ROOT / "counterbalance.json").as_posix(),
+        "counterbalance_sha256": EXPECTED_COUNTERBALANCE_SHA256,
+        "profile_state_source_path": PROFILE_STATE_SOURCE.as_posix(),
+        "profile_state_source_sha256": EXPECTED_PROFILE_STATE_SHA256,
+        "reported_profile_report_sha256": REPORTED_PROFILE_REPORT_SHA256,
+        "profile_state_locator": "sp4-primary-report.md:105-117,148-149",
+    }
+    if dict(source_binding) != expected:
+        raise ProfileValidationError("profile source binding does not match authoritative evidence")
+
+    manifest_path = _safe_source_path(root, expected["manifest_path"], "frozen manifest")
+    manifest_bytes = manifest_path.read_bytes()
+    if hashlib.sha256(manifest_bytes).hexdigest() != EXPECTED_MANIFEST_SHA256:
+        raise ProfileValidationError("frozen manifest source hash changed")
+    try:
+        manifest_entries = verify_manifest(root / PREREG_ROOT)
+    except Exception as exc:
+        raise ProfileValidationError("frozen preregistration source verification failed") from exc
+    counterbalance_path = _safe_source_path(root, expected["counterbalance_path"], "counterbalance")
+    counterbalance_bytes = counterbalance_path.read_bytes()
+    if hashlib.sha256(counterbalance_bytes).hexdigest() != EXPECTED_COUNTERBALANCE_SHA256:
+        raise ProfileValidationError("frozen counterbalance source hash changed")
+    if manifest_entries.get("counterbalance.json") != EXPECTED_COUNTERBALANCE_SHA256:
+        raise ProfileValidationError("counterbalance is not bound by frozen manifest")
+
+    report_path = _safe_source_path(root, PROFILE_STATE_SOURCE, "profile-state evidence")
+    report_bytes = report_path.read_bytes()
+    if hashlib.sha256(report_bytes).hexdigest() != EXPECTED_PROFILE_STATE_SHA256:
+        raise ProfileValidationError("authoritative missing-profile report source hash changed")
+    normalized_report = " ".join(report_bytes.decode("utf-8").split()).casefold()
+    required_claims = (
+        "zero attempted paths",
+        "zero accepted profiles",
+        "all eight fixture-party profile cases are missing",
+        REPORTED_PROFILE_REPORT_SHA256,
+    )
+    if any(claim.casefold() not in normalized_report for claim in required_claims):
+        raise ProfileValidationError("missing-profile source evidence no longer supports declaration")
+
+
+def _load_expected_row_pairs(root: Path) -> dict[str, Any]:
+    counterbalance_path = _safe_source_path(
+        root, PREREG_ROOT / "counterbalance.json", "frozen counterbalance"
+    )
+    try:
+        counterbalance = json.loads(counterbalance_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ProfileValidationError("frozen counterbalance cannot be read") from exc
+    if not isinstance(counterbalance, Mapping):
+        raise ProfileValidationError("frozen counterbalance is malformed")
+    if (
+        counterbalance.get("planned_rows") != 26
+        or counterbalance.get("reserve_rows") != 4
+        or counterbalance.get("total_rows") != 30
+    ):
+        raise ProfileValidationError("frozen 26-row and four-reserve counts changed")
+    rows = counterbalance.get("rows")
+    if not isinstance(rows, list) or len(rows) != 30:
+        raise ProfileValidationError("frozen counterbalance must contain exactly 30 rows")
+
+    seen_row_ids: set[str] = set()
+    planned: list[Mapping[str, Any]] = []
+    reserves: list[str] = []
+    for row in rows:
+        if not isinstance(row, Mapping):
+            raise ProfileValidationError("frozen counterbalance row is malformed")
+        row_id = row.get("row_id")
+        if not isinstance(row_id, str) or row_id in seen_row_ids:
+            raise ProfileValidationError("frozen counterbalance row identity is invalid")
+        seen_row_ids.add(row_id)
+        if row.get("row_type") == "planned":
+            planned.append(row)
+        elif row.get("row_type") == "replacement_only":
+            reserves.append(row_id)
+        else:
+            raise ProfileValidationError("unsupported frozen counterbalance row type")
+    if len(planned) != 26 or reserves != ["R01", "R02", "R03", "R04"]:
+        raise ProfileValidationError("planned rows or replacement-only reserves changed")
+    planned.sort(key=lambda row: row.get("run_order", 0))
+    if [row.get("run_order") for row in planned] != list(range(1, 27)):
+        raise ProfileValidationError("planned-row order is not the frozen 1-26 sequence")
+
+    pair_rows: dict[tuple[str, int], list[str]] = {}
+    row_metadata: dict[str, dict[str, Any]] = {}
+    planned_row_ids: list[str] = []
+    for row in planned:
+        row_id = row.get("row_id")
+        party_size = row.get("party")
+        script = row.get("script")
+        if not isinstance(row_id, str) or row_id.startswith("R"):
+            raise ProfileValidationError("replacement-only row appeared in planned set")
+        if type(party_size) is not int or party_size not in PARTY_SIZES:
+            raise ProfileValidationError("planned row has unsupported party size")
+        if script not in SCRIPT_PATHS:
+            raise ProfileValidationError("planned row references an unsupported script")
+        script_path = _safe_source_path(
+            root,
+            PREREG_ROOT / script,
+            "frozen planned script",
+        )
+        try:
+            script_document = json.loads(script_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise ProfileValidationError("frozen planned script cannot be read") from exc
+        fixture_ids = script_document.get("fixture_ids") if isinstance(script_document, Mapping) else None
+        if (
+            not isinstance(fixture_ids, list)
+            or not fixture_ids
+            or any(not isinstance(fixture_id, str) for fixture_id in fixture_ids)
+            or any(fixture_id not in FIXTURE_IDS for fixture_id in fixture_ids)
+            or len(set(fixture_ids)) != len(fixture_ids)
+        ):
+            raise ProfileValidationError("script fixture-party binding is unsupported")
+        planned_row_ids.append(row_id)
+        row_metadata[row_id] = {
+            "party_size": party_size,
+            "arm": row.get("arm"),
+            "fixed_seed": row.get("fixed_seed"),
+            "script": script,
+            "fixture_ids": list(fixture_ids),
+        }
+        for fixture_id in fixture_ids:
+            pair_rows.setdefault((fixture_id, party_size), []).append(row_id)
+    return {
+        "planned_row_ids": planned_row_ids,
+        "pair_rows": pair_rows,
+        "row_metadata": row_metadata,
+    }
+
+
+STUB_FILE = "scripts/live_gate_preflight_stub.py"
+# Files that drive the measured exchange: the profile runner (selects the
+# character and sends the first turn) and the socket script driver it uses.
+DRIVER_FILES = (
+    "scripts/live_gate_preflight_profile_runner.py",
+    "scripts/mapping_pilot/row_runner.py",
+)
+_HEX64 = re.compile(r"^[0-9a-f]{64}$")
+_WINDOWS_DRIVE = re.compile(r"^[A-Za-z]:[\\/]")
+_TMP_PATH = re.compile(r"(?:^|[\\/])tmp[\\/]")
+
+
+def _reject_forbidden_declaration_paths(value: Any) -> None:
+    """Reject absolute or tmp/ path strings anywhere inside a declaration."""
+    if isinstance(value, str):
+        if value.startswith(("/", "~", "\\")) or _WINDOWS_DRIVE.match(value):
+            raise ProfileValidationError(
+                "measured lifecycle declaration contains an absolute path"
+            )
+        if _TMP_PATH.search(value):
+            raise ProfileValidationError(
+                "measured lifecycle declaration contains a tmp/ path"
+            )
+    elif isinstance(value, Mapping):
+        for key, item in value.items():
+            _reject_forbidden_declaration_paths(key)
+            _reject_forbidden_declaration_paths(item)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            _reject_forbidden_declaration_paths(item)
+
+
+def _declared_repo_path(value: Any, label: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise ProfileValidationError("%s path is invalid" % label)
+    path = PurePosixPath(value)
+    if (
+        path.is_absolute()
+        or "\\" in value
+        or ".." in path.parts
+        or "." in path.parts
+        or not path.parts
+        or path.parts[0] == "tmp"
+        or path.as_posix() != value
+    ):
+        raise ProfileValidationError("%s path is not a safe repository-relative path" % label)
+    return value
+
+
+def _validate_file_hash_record(value: Any, label: str, *, expected_path: str | None) -> None:
+    _require_keys(value, {"path", "sha256"}, label)
+    path = _declared_repo_path(value.get("path"), label)
+    digest = value.get("sha256")
+    if expected_path is not None and path != expected_path:
+        raise ProfileValidationError("%s path differs from the bound tool file" % label)
+    if not isinstance(digest, str) or _HEX64.fullmatch(digest) is None:
+        raise ProfileValidationError("%s hash is invalid" % label)
+
+
+def _validate_lifecycle_profile(
+    value: Any,
+    *,
+    fixture_id: str,
+    party_size: int,
+    lifecycle: str,
+) -> str:
+    """Validate declaration shape only; hashes bind to call-site content at match time."""
+    if not isinstance(value, Mapping):
+        raise ProfileValidationError("startup/resume profile must be an object")
+    status = value.get("status")
+    if status == "MISSING":
+        _require_keys(
+            value,
+            {"status", "required", "reason"},
+            "missing lifecycle profile",
+        )
+        if type(value.get("required")) is not bool:
+            raise ProfileValidationError("lifecycle required flag must be boolean")
+        if lifecycle == "startup" and value.get("required") is not True:
+            raise ProfileValidationError("startup lifecycle must be required")
+        if lifecycle == "resume" and value.get("required") is not False:
+            raise ProfileValidationError("MISSING resume lifecycle must not be required")
+        reason = value.get("reason")
+        if not isinstance(reason, str) or not reason.strip():
+            raise ProfileValidationError("MISSING lifecycle profile requires a reason")
+        return "MISSING"
+    if status != "measured-under-stub":
+        raise ProfileValidationError("unsupported lifecycle profile status")
+    _reject_forbidden_declaration_paths(value)
+    _require_keys(
+        value,
+        {
+            "status",
+            "required",
+            "fixture_id",
+            "party_size",
+            "call_count",
+            "call_sites",
+            "stub_sha256",
+            "driver_sha256",
+            "provenance",
+        },
+        "measured lifecycle profile",
+    )
+    if type(value.get("required")) is not bool:
+        raise ProfileValidationError("lifecycle required flag must be boolean")
+    if lifecycle == "startup" and value.get("required") is not True:
+        raise ProfileValidationError("startup lifecycle must be required")
+    if (
+        value.get("fixture_id") != fixture_id
+        or type(value.get("party_size")) is not int
+        or value.get("party_size") != party_size
+    ):
+        raise ProfileValidationError("measured lifecycle fixture-party binding differs")
+    call_count = value.get("call_count")
+    call_sites = value.get("call_sites")
+    if type(call_count) is not int or call_count < 1:
+        raise ProfileValidationError("measured lifecycle call count is invalid")
+    if not isinstance(call_sites, list) or not call_sites:
+        raise ProfileValidationError("measured lifecycle call-site list is invalid")
+    _validate_file_hash_record(
+        value.get("stub_sha256"), "measured lifecycle stub", expected_path=STUB_FILE
+    )
+    drivers = value.get("driver_sha256")
+    if not isinstance(drivers, list) or len(drivers) != len(DRIVER_FILES):
+        raise ProfileValidationError("measured lifecycle driver hash list is invalid")
+    for driver, expected_path in zip(drivers, DRIVER_FILES):
+        _validate_file_hash_record(
+            driver, "measured lifecycle driver", expected_path=expected_path
+        )
+    provenance = value.get("provenance")
+    _require_keys(provenance, {"run_id", "evidence_sha256"}, "measured lifecycle provenance")
+    run_id = provenance.get("run_id")
+    evidence_sha256 = provenance.get("evidence_sha256")
+    if (
+        not isinstance(run_id, str)
+        or _SAFE_RUN_ID.fullmatch(run_id) is None
+        or not isinstance(evidence_sha256, str)
+        or _HEX64.fullmatch(evidence_sha256) is None
+    ):
+        raise ProfileValidationError("measured lifecycle provenance is invalid")
+    seen_sites: set[tuple[str, int]] = set()
+    file_hashes: dict[str, str] = {}
+    total = 0
+    for call_site in call_sites:
+        _require_keys(
+            call_site,
+            {"source_file", "source_line", "source_file_sha256", "count"},
+            "router call site",
+        )
+        source_file = _declared_repo_path(call_site.get("source_file"), "router call-site source")
+        source_line = call_site.get("source_line")
+        source_file_sha256 = call_site.get("source_file_sha256")
+        site_count = call_site.get("count")
+        if (
+            type(source_line) is not int
+            or source_line < 1
+            or not isinstance(source_file_sha256, str)
+            or _HEX64.fullmatch(source_file_sha256) is None
+            or type(site_count) is not int
+            or site_count < 1
+        ):
+            raise ProfileValidationError("measured router call-site provenance is invalid")
+        if (source_file, source_line) in seen_sites:
+            raise ProfileValidationError("measured router call site is duplicated")
+        seen_sites.add((source_file, source_line))
+        if file_hashes.setdefault(source_file, source_file_sha256) != source_file_sha256:
+            raise ProfileValidationError("router call-site source hash is inconsistent")
+        total += site_count
+    if total != call_count:
+        raise ProfileValidationError("measured lifecycle call-site counts do not sum to total")
+    return "measured-under-stub"
+
+
+def tool_file_hashes(project_root: str | Path = PROJECT_ROOT) -> dict[str, str]:
+    """Return sha256 of the stub and driver files in the tool tree."""
+    root = Path(project_root).resolve(strict=True)
+    result: dict[str, str] = {}
+    for relative in (STUB_FILE, *DRIVER_FILES):
+        path = _safe_source_path(root, relative, "stub/driver file")
+        result[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return result
+
+
+def match_lifecycle_declaration(
+    declaration: Mapping[str, Any],
+    *,
+    observed_call_count: int,
+    observed_call_sites: list[Mapping[str, Any]],
+    observed_tool_hashes: Mapping[str, str],
+) -> dict[str, Any]:
+    """Fail-closed content match of a declaration against one observed run.
+
+    Returns ``{"kinds": [...], "differences": {...}}``; an empty ``kinds`` list
+    is the only match. Kinds, in priority order: ``stub_hash_mismatch``,
+    ``driver_hash_mismatch``, ``file_hash_mismatch``, ``call_sites_mismatch``,
+    ``total_mismatch``.
+    """
+    differences: dict[str, Any] = {}
+    kinds: list[str] = []
+
+    stub = declaration["stub_sha256"]
+    observed_stub = observed_tool_hashes.get(stub["path"])
+    if observed_stub != stub["sha256"]:
+        kinds.append("stub_hash_mismatch")
+        differences["stub_hash"] = {
+            "path": stub["path"],
+            "expected": stub["sha256"],
+            "observed": observed_stub,
+        }
+    driver_diffs = [
+        {
+            "path": driver["path"],
+            "expected": driver["sha256"],
+            "observed": observed_tool_hashes.get(driver["path"]),
+        }
+        for driver in declaration["driver_sha256"]
+        if observed_tool_hashes.get(driver["path"]) != driver["sha256"]
+    ]
+    if driver_diffs:
+        kinds.append("driver_hash_mismatch")
+        differences["driver_hashes"] = driver_diffs
+
+    expected_files: dict[str, str] = {}
+    expected_sites: dict[tuple[str, int], int] = {}
+    for site in declaration["call_sites"]:
+        expected_files[site["source_file"]] = site["source_file_sha256"]
+        expected_sites[(site["source_file"], site["source_line"])] = site["count"]
+    observed_files: dict[str, set[str]] = {}
+    observed_sites: dict[tuple[str, int], int] = {}
+    for site in observed_call_sites:
+        path = site.get("source_file")
+        line = site.get("source_line")
+        observed_files.setdefault(path, set()).add(site.get("source_file_sha256"))
+        key = (path, line)
+        observed_sites[key] = observed_sites.get(key, 0) + (
+            site["count"] if type(site.get("count")) is int else 0
+        )
+    file_diffs = []
+    for path in sorted(set(expected_files) | set(observed_files)):
+        expected_hash = expected_files.get(path)
+        observed_hashes = observed_files.get(path)
+        if expected_hash is None or observed_hashes is None:
+            continue
+        if observed_hashes != {expected_hash}:
+            file_diffs.append(
+                {
+                    "path": path,
+                    "expected": expected_hash,
+                    "observed": sorted(h for h in observed_hashes if isinstance(h, str)),
+                }
+            )
+    if file_diffs:
+        kinds.append("file_hash_mismatch")
+        differences["file_hashes"] = file_diffs
+
+    extra = sorted(set(observed_sites) - set(expected_sites), key=str)
+    missing = sorted(set(expected_sites) - set(observed_sites), key=str)
+    count_changes = [
+        {
+            "source_file": key[0],
+            "source_line": key[1],
+            "expected": expected_sites[key],
+            "observed": observed_sites[key],
+        }
+        for key in sorted(set(expected_sites) & set(observed_sites), key=str)
+        if expected_sites[key] != observed_sites[key]
+    ]
+    if extra or missing or count_changes:
+        kinds.append("call_sites_mismatch")
+        differences["call_sites"] = {
+            "extra": [{"source_file": k[0], "source_line": k[1]} for k in extra],
+            "missing": [{"source_file": k[0], "source_line": k[1]} for k in missing],
+            "count_changes": count_changes,
+        }
+    if observed_call_count != declaration["call_count"]:
+        kinds.append("total_mismatch")
+        differences["total"] = {
+            "expected": declaration["call_count"],
+            "observed": observed_call_count,
+        }
+    return {"kinds": kinds, "differences": differences}
+
+
+def declaration_from_evidence(
+    evidence_path: str | Path,
+    *,
+    project_root: str | Path = PROJECT_ROOT,
+    required: bool = True,
+    lifecycle: str = "startup",
+) -> dict[str, Any]:
+    """Build a measured lifecycle declaration entry from retained run evidence.
+
+    Reads fixture, party, call sites (repo-relative paths, file hashes, counts)
+    and run id from the retained ``profile-evidence.json``; the evidence file
+    itself is referenced only by run id and sha256. Stub and driver hashes are
+    computed from the tool tree. This helper does not re-validate the run
+    (``_validate_profile_evidence`` does that against the run's own tree).
+    """
+    root = Path(project_root).resolve(strict=True)
+    if type(required) is not bool or lifecycle not in ("startup", "resume"):
+        raise ProfileValidationError("measured lifecycle requirement is invalid")
+    path = Path(evidence_path)
+    if not path.is_absolute():
+        path = root / path
+    raw = _read_bounded_evidence(path)
+    try:
+        evidence = json.loads(
+            raw.decode("utf-8"),
+            object_pairs_hook=_unique_object,
+            parse_constant=_reject_json_constant,
+        )
+    except (UnicodeError, json.JSONDecodeError, ValueError) as exc:
+        raise ProfileValidationError("profile evidence is not valid JSON") from exc
+    if not isinstance(evidence, Mapping):
+        raise ProfileValidationError("profile evidence is not an object")
+    if evidence.get("outcome") != "completed" or evidence.get("failure_code") is not None:
+        raise ProfileValidationError("profile evidence run did not complete")
+    sites = evidence.get("call_sites")
+    if not isinstance(sites, list):
+        raise ProfileValidationError("profile evidence call sites are missing")
+    entry = {
+        "status": "measured-under-stub",
+        "required": required,
+        "fixture_id": evidence.get("fixture_id"),
+        "party_size": evidence.get("party_size"),
+        "call_count": evidence.get("call_count"),
+        "call_sites": [
+            {
+                key: site.get(key)
+                for key in ("source_file", "source_line", "source_file_sha256", "count")
+            }
+            if isinstance(site, Mapping)
+            else site
+            for site in sites
+        ],
+    }
+    hashes = tool_file_hashes(root)
+    entry["stub_sha256"] = {"path": STUB_FILE, "sha256": hashes[STUB_FILE]}
+    entry["driver_sha256"] = [
+        {"path": driver, "sha256": hashes[driver]} for driver in DRIVER_FILES
+    ]
+    entry["provenance"] = {
+        "run_id": evidence.get("run_id"),
+        "evidence_sha256": hashlib.sha256(raw).hexdigest(),
+    }
+    _validate_lifecycle_profile(
+        entry,
+        fixture_id=entry["fixture_id"],
+        party_size=entry["party_size"],
+        lifecycle=lifecycle,
+    )
+    return entry
+
+
+def _validate_profile_checkpoint_evidence(
+    project_root: Path,
+    *,
+    evidence: Mapping[str, Any],
+    fixture_id: str,
+    party_size: int,
+    lifecycle: str,
+    row_metadata: Mapping[str, Mapping[str, Any]],
+    source_sha: str,
+    validator_input_snapshots: Mapping[tuple[str, str], bytes] | None = None,
+    captured_validator_inputs: dict[tuple[str, str], bytes] | None = None,
+) -> None:
+    """Validate a checkpoint descriptor and its retained row-bound attestation."""
+    descriptor = evidence.get("resume_checkpoint")
+    attestation_record = evidence.get("checkpoint_attestation")
+    travel = evidence.get("checkpoint_travel")
+    row_id = evidence.get("planned_row_id")
+    metadata = row_metadata.get(row_id) if isinstance(row_id, str) else None
+    run_id = evidence.get("run_id")
+    if (
+        not isinstance(row_id, str)
+        or _SAFE_RUN_ID.fullmatch(row_id) is None
+        or not isinstance(run_id, str)
+        or _SAFE_RUN_ID.fullmatch(run_id) is None
+    ):
+        raise ProfileValidationError("profile evidence checkpoint identity is invalid")
+
+    descriptor_fields = {
+        "checkpoint_root",
+        "state_sha256",
+        "row_id",
+        "fixture_id",
+        "party_size",
+        "arm",
+        "fixed_seed",
+    }
+    travel_fields = {
+        "step_id",
+        "source_location_id",
+        "source_runtime_location_id",
+        "target_source_location_id",
+        "target_location_id",
+        "response_counts",
+        "response_call_sequences",
+        "complete",
+    }
+    if (
+        lifecycle != "startup"
+        or not isinstance(descriptor, Mapping)
+        or set(descriptor) != descriptor_fields
+        or not isinstance(metadata, Mapping)
+        or type(descriptor.get("party_size")) is not int
+        or descriptor.get("row_id") != row_id
+        or descriptor.get("fixture_id") != fixture_id
+        or descriptor.get("party_size") != party_size
+        or descriptor.get("party_size") != metadata.get("party_size")
+        or not isinstance(descriptor.get("arm"), str)
+        or descriptor.get("arm") != metadata.get("arm")
+        or type(descriptor.get("fixed_seed")) is not int
+        or descriptor.get("fixed_seed") != metadata.get("fixed_seed")
+        or fixture_id not in metadata.get("fixture_ids", [])
+        or not isinstance(descriptor.get("state_sha256"), str)
+        or _HEX64.fullmatch(descriptor["state_sha256"]) is None
+        or not isinstance(travel, Mapping)
+        or set(travel) != travel_fields
+        or any(
+            not isinstance(travel.get(field), str) or not travel.get(field)
+            for field in (
+                "step_id",
+                "source_location_id",
+                "source_runtime_location_id",
+                "target_source_location_id",
+                "target_location_id",
+            )
+        )
+        or travel.get("complete") is not True
+        or not isinstance(travel.get("response_counts"), Mapping)
+        or set(travel["response_counts"])
+        != {
+            "travel_action_responses",
+            "gameplay_validation_responses",
+            "transition_validation_responses",
+            "transition_narration_responses",
+        }
+        or any(
+            type(count) is not int or count != 1
+            for count in travel["response_counts"].values()
+        )
+        or not isinstance(travel.get("response_call_sequences"), Mapping)
+        or set(travel["response_call_sequences"])
+        != {
+            "travel_action",
+            "transition_validation",
+            "gameplay_validation",
+            "transition_narration",
+        }
+        or any(
+            type(sequence) is not int or sequence < 1
+            for sequence in travel["response_call_sequences"].values()
+        )
+        or [
+            travel["response_call_sequences"][key]
+            for key in (
+                "travel_action",
+                "transition_validation",
+                "gameplay_validation",
+                "transition_narration",
+            )
+        ]
+        != list(
+            range(
+                min(travel["response_call_sequences"].values()),
+                min(travel["response_call_sequences"].values()) + 4,
+            )
+        )
+        or not isinstance(attestation_record, Mapping)
+        or set(attestation_record) != {"path", "sha256"}
+        or not isinstance(attestation_record.get("path"), str)
+        or not isinstance(attestation_record.get("sha256"), str)
+        or _HEX64.fullmatch(attestation_record["sha256"]) is None
+    ):
+        raise ProfileValidationError("profile evidence checkpoint identity is invalid")
+
+    checkpoint_root = descriptor.get("checkpoint_root")
+    attestation_path = attestation_record.get("path")
+    expected_attestation_path = str(checkpoint_root) + "/attestation.json"
+    path = PurePosixPath(checkpoint_root) if isinstance(checkpoint_root, str) else None
+    expected_checkpoint_root = PurePosixPath(
+        "tmp",
+        "router-rollout",
+        "live-gate-preflight-checkpoints",
+        run_id,
+        row_id,
+        "%s-p%d" % (fixture_id, party_size),
+    )
+    if (
+        path is None
+        or path.is_absolute()
+        or ".." in path.parts
+        or "\\" in str(checkpoint_root)
+        or path != expected_checkpoint_root
+        or attestation_path != expected_attestation_path
+    ):
+        raise ProfileValidationError("profile evidence checkpoint path is invalid")
+
+    input_key = ("checkpoint_attestation", attestation_path)
+    if validator_input_snapshots is not None:
+        attestation_bytes = validator_input_snapshots.get(input_key)
+        if not isinstance(attestation_bytes, bytes):
+            raise ProfileValidationError(
+                "profile evidence checkpoint attestation copy is missing"
+            )
+    else:
+        try:
+            attestation_file = _safe_source_path(
+                project_root, attestation_path, "checkpoint attestation"
+            )
+            attestation_bytes = _read_bounded_evidence(attestation_file)
+        except ProfileValidationError as exc:
+            raise ProfileValidationError(
+                "profile evidence checkpoint attestation is unavailable"
+            ) from exc
+    if captured_validator_inputs is not None:
+        captured_validator_inputs[input_key] = attestation_bytes
+    if hashlib.sha256(attestation_bytes).hexdigest() != attestation_record["sha256"]:
+        raise ProfileValidationError("profile evidence checkpoint attestation hash differs")
+    try:
+        attestation = json.loads(
+            attestation_bytes.decode("utf-8"),
+            object_pairs_hook=_unique_object,
+            parse_constant=_reject_json_constant,
+        )
+    except (UnicodeError, json.JSONDecodeError, ValueError) as exc:
+        raise ProfileValidationError(
+            "profile evidence checkpoint attestation is invalid"
+        ) from exc
+    attestation_fields = {
+        "schema_version",
+        "source_sha",
+        "run_id",
+        "row_id",
+        "fixture_id",
+        "party_size",
+        "arm",
+        "fixed_seed",
+        "step_id",
+        "source_location_id",
+        "source_runtime_location_id",
+        "target_source_location_id",
+        "target_location_id",
+        "initial_location_id",
+        "final_location_id",
+        "initial_state_sha256",
+        "state_sha256",
+        "initial_time",
+        "final_time",
+        "travel_proof",
+        "persistence",
+        "checkpoint_root",
+    }
+    if (
+        not isinstance(attestation, Mapping)
+        or set(attestation) != attestation_fields
+        or type(attestation.get("schema_version")) is not int
+        or attestation.get("schema_version") != 1
+        or attestation.get("source_sha") != source_sha
+        or attestation.get("run_id") != run_id
+        or attestation.get("row_id") != row_id
+        or attestation.get("fixture_id") != fixture_id
+        or type(attestation.get("party_size")) is not int
+        or attestation.get("party_size") != party_size
+        or attestation.get("arm") != metadata.get("arm")
+        or type(attestation.get("fixed_seed")) is not int
+        or attestation.get("fixed_seed") != metadata.get("fixed_seed")
+        or attestation.get("step_id") != travel.get("step_id")
+        or attestation.get("source_location_id") != travel.get("source_location_id")
+        or attestation.get("source_runtime_location_id")
+        != travel.get("source_runtime_location_id")
+        or attestation.get("target_source_location_id")
+        != travel.get("target_source_location_id")
+        or attestation.get("target_location_id") != travel.get("target_location_id")
+        or attestation.get("initial_location_id")
+        != travel.get("source_runtime_location_id")
+        or attestation.get("final_location_id") != travel.get("target_location_id")
+        or attestation.get("travel_proof") != dict(travel)
+        or not isinstance(attestation.get("initial_state_sha256"), str)
+        or _HEX64.fullmatch(attestation["initial_state_sha256"]) is None
+        or not isinstance(attestation.get("initial_time"), str)
+        or not attestation.get("initial_time")
+        or not isinstance(attestation.get("final_time"), str)
+        or not attestation.get("final_time")
+        or attestation.get("final_time") == attestation.get("initial_time")
+        or attestation.get("state_sha256") != descriptor.get("state_sha256")
+        or attestation.get("checkpoint_root") != checkpoint_root
+        or not isinstance(attestation.get("persistence"), Mapping)
+        or set(attestation["persistence"])
+        != {
+            "host_stopped_before_checkpoint",
+            "canonical_state_hash_verified",
+            "resume_state_validation",
+        }
+        or attestation["persistence"].get("host_stopped_before_checkpoint") is not True
+        or attestation["persistence"].get("canonical_state_hash_verified") is not True
+        or attestation["persistence"].get("resume_state_validation") != "passed"
+    ):
+        raise ProfileValidationError("profile evidence checkpoint attestation differs")
+
+
+def _validate_profile_evidence(
+    project_root: Path,
+    *,
+    evidence_path: str,
+    evidence_sha256: str,
+    profile_id: str,
+    fixture_id: str,
+    party_size: int,
+    lifecycle: str,
+    planned_row_ids: list[str],
+    row_metadata: Mapping[str, Mapping[str, Any]],
+    source_sha: str,
+    command: list[str],
+    pythonpath: str,
+    call_count: int,
+    call_sites: list[Any],
+    evidence_directory: Path | None = None,
+    trusted_summary_source: tuple[str, bytes] | None = None,
+    validator_input_snapshots: Mapping[tuple[str, str], bytes] | None = None,
+    captured_validator_inputs: dict[tuple[str, str], bytes] | None = None,
+) -> None:
+    """Verify a measured declaration against its retained, bounded call log."""
+    path = _safe_source_path(project_root, evidence_path, "profile evidence")
+    raw = _read_bounded_evidence(path)
+    if hashlib.sha256(raw).hexdigest() != evidence_sha256:
+        raise ProfileValidationError("profile evidence hash does not match declaration")
+    try:
+        evidence = json.loads(
+            raw.decode("utf-8"),
+            object_pairs_hook=_unique_object,
+            parse_constant=_reject_json_constant,
+        )
+    except (UnicodeError, json.JSONDecodeError, ValueError) as exc:
+        raise ProfileValidationError("profile evidence is not valid JSON") from exc
+
+    base_evidence_fields = {
+        "schema_version",
+        "authorization_ruling_id",
+        "profile_id",
+        "fixture_id",
+        "party_size",
+        "lifecycle",
+        "planned_row_id",
+        "arm",
+        "sandbox_root",
+        "run_id",
+        "source_sha",
+        "command",
+        "working_directory",
+        "pythonpath",
+        "invocation_identity",
+        "controller_interpreter",
+        "worker_interpreter",
+        "network_guard_active",
+        "provider_environment_keys_blank",
+        "sandbox_provider_key_placeholder",
+        "proxy_values_blank",
+        "real_project_config_loaded",
+        "sandbox_config_loaded",
+        "startup_guard_from_sitecustomize",
+        "sandbox_config_origin_guard_active",
+        "process_canaries",
+        "guard_event_journal",
+        "process_census",
+        "worker_shutdown",
+        "driver_exchange",
+        "outcome",
+        "calls",
+        "call_count",
+        "call_sites",
+        "host_command",
+        "runner_command",
+        "failure_code",
+        "teardown",
+    }
+    evidence_fields = base_evidence_fields | {"adv_summary_child"}
+    evidence_with_retained_artifacts_fields = evidence_fields | {
+        "summary_child_artifacts"
+    }
+    legacy_evidence_fields = base_evidence_fields - {"invocation_identity"}
+    retained_evidence_fields = evidence_fields | {"teardown_evidence"}
+    retained_with_artifacts_fields = (
+        evidence_with_retained_artifacts_fields | {"teardown_evidence"}
+    )
+    # Retention is only attempted for a row that reached the point of
+    # retaining run evidence (teardown_evidence present) and whose worker
+    # actually launched a summary child (launch_count > 0); the retention
+    # outcome is then mandatory, which is what keeps a retention failure
+    # from being silently masked by an earlier failure_code. A row with no
+    # summary-child launch never gets this field.
+    retained_evidence_fields_with_retention = (
+        retained_evidence_fields | {"summary_child_retention"}
+    )
+    retained_with_artifacts_fields_with_retention = (
+        retained_with_artifacts_fields | {"summary_child_retention"}
+    )
+    legacy_retained_evidence_fields = retained_evidence_fields - {
+        "invocation_identity"
+    }
+    legacy_retained_with_artifacts_fields = (
+        retained_with_artifacts_fields - {"invocation_identity"}
+    )
+    legacy_retained_evidence_fields_with_retention = (
+        retained_evidence_fields_with_retention - {"invocation_identity"}
+    )
+    legacy_retained_with_artifacts_fields_with_retention = (
+        retained_with_artifacts_fields_with_retention - {"invocation_identity"}
+    )
+    historic_retained_evidence_fields = (
+        base_evidence_fields | {"teardown_evidence"}
+    )
+    historic_legacy_retained_evidence_fields = (
+        historic_retained_evidence_fields - {"invocation_identity"}
+    )
+    accepted_evidence_fields = {
+        frozenset(fields)
+        for fields in (
+            evidence_fields,
+            evidence_with_retained_artifacts_fields,
+            legacy_evidence_fields,
+            retained_evidence_fields,
+            retained_with_artifacts_fields,
+            retained_evidence_fields_with_retention,
+            retained_with_artifacts_fields_with_retention,
+            legacy_retained_evidence_fields,
+            legacy_retained_with_artifacts_fields,
+            legacy_retained_evidence_fields_with_retention,
+            legacy_retained_with_artifacts_fields_with_retention,
+            base_evidence_fields,
+            historic_retained_evidence_fields,
+            historic_legacy_retained_evidence_fields,
+        )
+    }
+    checkpoint_evidence_fields = {
+        "checkpoint_travel",
+        "resume_checkpoint",
+        "checkpoint_attestation",
+    }
+    accepted_evidence_fields.update(
+        fields | checkpoint_evidence_fields for fields in tuple(accepted_evidence_fields)
+    )
+    if not isinstance(evidence, Mapping) or frozenset(evidence) not in accepted_evidence_fields:
+        raise ProfileValidationError("profile evidence fields are malformed")
+    checkpoint_fields_present = set(evidence) & checkpoint_evidence_fields
+    checkpoint_run = checkpoint_fields_present == checkpoint_evidence_fields
+    if checkpoint_fields_present:
+        if checkpoint_fields_present != checkpoint_evidence_fields:
+            raise ProfileValidationError("profile evidence checkpoint fields are incomplete")
+        _validate_profile_checkpoint_evidence(
+            project_root,
+            evidence=evidence,
+            fixture_id=fixture_id,
+            party_size=party_size,
+            lifecycle=lifecycle,
+            row_metadata=row_metadata,
+            source_sha=source_sha,
+            validator_input_snapshots=validator_input_snapshots,
+            captured_validator_inputs=captured_validator_inputs,
+        )
+    historic_identity_unavailable = "invocation_identity" not in evidence
+    if "adv_summary_child" not in evidence and not historic_identity_unavailable:
+        raise ProfileValidationError("profile evidence summary child proof is missing")
+    if historic_identity_unavailable and not _is_exact_historic_profile_evidence(
+        evidence,
+        evidence_path=evidence_path,
+        evidence_sha256=evidence_sha256,
+        profile_id=profile_id,
+        fixture_id=fixture_id,
+        party_size=party_size,
+        lifecycle=lifecycle,
+        source_sha=source_sha,
+    ):
+        raise ProfileValidationError("profile evidence invocation identity is missing")
+    if (
+        type(evidence.get("schema_version")) is not int
+        or evidence.get("schema_version") != 1
+        or evidence.get("authorization_ruling_id") != AUTHORIZATION_RULING_ID
+        or evidence.get("profile_id") != profile_id
+        or evidence.get("fixture_id") != fixture_id
+        or type(evidence.get("party_size")) is not int
+        or evidence.get("party_size") != party_size
+        or evidence.get("lifecycle") != lifecycle
+        or evidence.get("planned_row_id") not in planned_row_ids
+        or evidence.get("arm")
+        != row_metadata.get(evidence.get("planned_row_id"), {}).get("arm")
+        or evidence.get("fixture_id")
+        not in row_metadata.get(evidence.get("planned_row_id"), {}).get("fixture_ids", [])
+        or evidence.get("party_size")
+        != row_metadata.get(evidence.get("planned_row_id"), {}).get("party_size")
+        or evidence.get("sandbox_root") != "tmp/combat_capture"
+        or not isinstance(evidence.get("run_id"), str)
+        or _SAFE_RUN_ID.fullmatch(evidence["run_id"]) is None
+        or evidence.get("source_sha") != source_sha
+        or evidence.get("command") != command
+        or evidence.get("working_directory") != _PROFILE_WORKING_DIRECTORY
+        or evidence.get("pythonpath") != pythonpath
+        or not _valid_interpreter_identity(
+            evidence.get("controller_interpreter"), project_root
+        )
+        or not _valid_interpreter_identity(
+            evidence.get("worker_interpreter"), project_root
+        )
+        or evidence.get("network_guard_active") is not True
+        or evidence.get("provider_environment_keys_blank") is not True
+        or evidence.get("sandbox_provider_key_placeholder")
+        != SANDBOX_PROVIDER_KEY_PLACEHOLDER
+        or evidence.get("proxy_values_blank") is not True
+        or evidence.get("real_project_config_loaded") is not False
+        or evidence.get("sandbox_config_loaded") is not True
+        or evidence.get("startup_guard_from_sitecustomize") is not True
+        or evidence.get("sandbox_config_origin_guard_active") is not True
+        or evidence.get("outcome") != "completed"
+        or evidence.get("failure_code") is not None
+    ):
+        raise ProfileValidationError("profile evidence identity or safety state differs")
+
+    if not historic_identity_unavailable:
+        _validate_profile_invocation_identity(
+            evidence.get("invocation_identity"),
+            evidence=evidence,
+            project_root=project_root,
+            expected_command=command,
+            expected_pythonpath=pythonpath,
+        )
+
+    process_canaries = evidence.get("process_canaries")
+    if not isinstance(process_canaries, list) or len(process_canaries) != 3:
+        raise ProfileValidationError("profile evidence process canaries are incomplete")
+    expected_canaries = (
+        ("controller-startup", "parent", evidence.get("runner_command")),
+        ("host-prelaunch", "host", evidence.get("host_command")),
+        ("host-startup", "host", evidence.get("host_command")),
+    )
+    canary_pids: list[int] = []
+    host_environment_sha256: str | None = None
+    for canary, (expected_stage, expected_role, expected_command) in zip(
+        process_canaries, expected_canaries
+    ):
+        canary_fields = {
+            "canary_stage",
+            "process_role",
+            "pid",
+            "startup_observed_at_ns",
+            "command",
+            "command_sha256",
+            "environment_sha256",
+            "working_directory",
+            "guard_active",
+            "non_loopback_connect_denied",
+            "subprocess_launch_denied",
+            "interpreter",
+            "guard_events_complete",
+            "guard_events",
+        }
+        _require_keys(canary, canary_fields, "startup process canary")
+        canary_command = canary.get("command")
+        command_sha256 = canary.get("command_sha256")
+        environment_sha256 = canary.get("environment_sha256")
+        working_directory = canary.get("working_directory")
+        if (
+            canary.get("canary_stage") != expected_stage
+            or canary.get("process_role") != expected_role
+            or type(canary.get("pid")) is not int
+            or canary.get("pid") <= 0
+            or type(canary.get("startup_observed_at_ns")) is not int
+            or canary.get("startup_observed_at_ns") <= 0
+            or canary_command != expected_command
+            or not (
+                _valid_controller_command(canary_command)
+                if expected_stage == "controller-startup"
+                else _valid_command(canary_command)
+            )
+            or not isinstance(command_sha256, str)
+            or re.fullmatch(r"[0-9a-f]{64}", command_sha256) is None
+            or hashlib.sha256(
+                json.dumps(
+                    canary_command, ensure_ascii=True, separators=(",", ":")
+                ).encode("ascii")
+            ).hexdigest()
+            != command_sha256
+            or not isinstance(environment_sha256, str)
+            or re.fullmatch(r"[0-9a-f]{64}", environment_sha256) is None
+            or not isinstance(working_directory, str)
+            or canary.get("guard_active") is not True
+            or canary.get("non_loopback_connect_denied") is not True
+            or canary.get("subprocess_launch_denied") is not True
+        ):
+            raise ProfileValidationError("profile evidence process canary identity differs")
+        canary_guard_events = canary.get("guard_events")
+        if (
+            canary.get("guard_events_complete") is not True
+            or not validate_guard_event_records(
+                canary_guard_events,
+                expected_pid=canary["pid"],
+                require_startup_canaries=True,
+            )
+        ):
+            raise ProfileValidationError(
+                "profile evidence process canary guard events are incomplete"
+            )
+        canary_pids.append(canary["pid"])
+        expected_interpreter = (
+            evidence.get("worker_interpreter")
+            if expected_role == "host"
+            else evidence.get("controller_interpreter")
+        )
+        if canary.get("interpreter") != expected_interpreter:
+            raise ProfileValidationError("profile evidence process canary interpreter differs")
+        if expected_role == "host":
+            expected_cwd = str(project_root / "tmp" / "combat_capture")
+            if working_directory != expected_cwd:
+                raise ProfileValidationError("profile evidence host canary working directory differs")
+            if expected_stage == "host-prelaunch":
+                host_environment_sha256 = environment_sha256
+            elif environment_sha256 != host_environment_sha256:
+                raise ProfileValidationError(
+                    "profile evidence host launch environment differs"
+                )
+        else:
+            try:
+                Path(working_directory).resolve(strict=True).relative_to(
+                    project_root.resolve(strict=True)
+                )
+            except (OSError, RuntimeError, ValueError) as exc:
+                raise ProfileValidationError(
+                    "profile evidence controller canary working directory is unsafe"
+                ) from exc
+    if len(set(canary_pids)) != len(canary_pids):
+        raise ProfileValidationError("profile evidence process canary pids are duplicated")
+    process_census = evidence.get("process_census")
+    census_fields = {
+        "controller_pid",
+        "driver_pid",
+        "host_prelaunch_pid",
+        "host_worker_pid",
+        "launched_pids",
+        "socket_owner_pids",
+        "python_child_pids",
+        "python_pids",
+        "guarded_pids",
+        "canary_pids",
+        "uncovered_pids",
+        "guard_events_valid",
+        "socket_pid_samples",
+        "complete",
+    }
+    _require_keys(process_census, census_fields, "process census")
+    process_by_stage = {
+        canary["canary_stage"]: canary for canary in process_canaries
+    }
+    controller_pid = process_by_stage["controller-startup"]["pid"]
+    host_prelaunch_pid = process_by_stage["host-prelaunch"]["pid"]
+    host_worker_pid = process_by_stage["host-startup"]["pid"]
+    canary_pids = sorted(canary["pid"] for canary in process_canaries)
+    guard_events = _read_profile_guard_events(
+        project_root,
+        evidence.get("guard_event_journal"),
+        run_id=evidence["run_id"],
+        evidence_directory=evidence_directory,
+    )
+    for event in guard_events:
+        if event.get("event_type") != "network_attempt" or event.get("decision") != "allowed":
+            continue
+        host = event.get("target_host")
+        try:
+            loopback = isinstance(host, str) and ipaddress.ip_address(host).is_loopback
+        except ValueError:
+            loopback = False
+        if not loopback:
+            raise ProfileValidationError(
+                "profile evidence guard journal records foreign egress"
+            )
+    _validate_profile_guarded_processes(
+        process_canaries=process_canaries,
+        guard_events=guard_events,
+        run_id=evidence["run_id"],
+    )
+    expected_samples = ("before_host", "host_ready", "after_teardown")
+    samples = process_census.get("socket_pid_samples")
+    if not isinstance(samples, list) or len(samples) != len(expected_samples):
+        raise ProfileValidationError("profile evidence process census is incomplete")
+    socket_owners: set[int] = set()
+    sample_pids: dict[str, set[int]] = {}
+    sample_rows: dict[str, list[dict[str, Any]]] = {}
+    sample_scopes: dict[str, list[dict[str, Any]]] = {}
+    common_scopes: dict[str, dict[str, Any]] = {}
+    before_host_startup_pids: set[int] | None = None
+    for sample, phase in zip(samples, expected_samples):
+        rows, owners, scopes, startup_pids = _read_profile_socket_sample(
+            project_root,
+            sample,
+            phase=phase,
+            run_id=evidence["run_id"],
+            process_canaries=process_canaries,
+            guard_events=guard_events,
+            evidence_directory=evidence_directory,
+            checkpoint_run=checkpoint_run,
+            before_host_startup_pids=before_host_startup_pids,
+        )
+        if phase == "before_host":
+            before_host_startup_pids = startup_pids
+        for scope in scopes:
+            source = scope["launch_source"]
+            prior_scope = common_scopes.get(source)
+            if prior_scope is not None and prior_scope != scope:
+                raise ProfileValidationError(
+                    "profile evidence process census socket scopes differ"
+                )
+            common_scopes[source] = scope
+        sample_pids[phase] = owners
+        sample_rows[phase] = rows
+        sample_scopes[phase] = scopes
+        socket_owners.update(owners)
+
+    guarded_pids = sorted(
+        {
+            event["pid"]
+            for event in guard_events
+            if event.get("event_type") == "guard_startup"
+        }
+    )
+    python_child_pids = sorted(
+        {
+            event["child_pid"]
+            for event in guard_events
+            if event.get("event_type") == "subprocess_started"
+            and event.get("child_is_python") is True
+        }
+    )
+    launched_pids = sorted({controller_pid, host_prelaunch_pid, host_worker_pid})
+    python_pids = sorted(
+        set(launched_pids) | set(python_child_pids) | socket_owners | set(guarded_pids)
+    )
+    uncovered_pids = sorted(set(python_pids) - set(guarded_pids))
+    host_process_pids = _authorized_host_process_pids(guard_events, host_worker_pid)
+    host_ready_rows = sample_rows["host_ready"]
+    host_ready_owners = sample_pids["host_ready"]
+    host_ready_listener_pids = _socket_listener_pids(host_ready_rows, port=8360)
+    before_host_rows = sample_rows["before_host"]
+    before_host_owners = sample_pids["before_host"]
+    before_host_processes = _authorized_profile_process_tree(
+        sample_scopes["before_host"], guard_events
+    )
+    host_ready_processes = _authorized_profile_process_tree(
+        sample_scopes["host_ready"], guard_events
+    )
+    after_teardown_rows = sample_rows["after_teardown"]
+    after_teardown_owners = sample_pids["after_teardown"]
+    if _socket_listener_pids(after_teardown_rows, port=8360):
+        raise ProfileValidationError(
+            "profile evidence retains an active listener on port 8360"
+        )
+    if any(
+        _socket_listener_pids(sample_rows[phase], port=8370)
+        for phase in expected_samples
+    ):
+        raise ProfileValidationError(
+            "profile evidence retains an active listener on port 8370"
+        )
+    if (
+        before_host_processes is None
+        or not before_host_owners.issubset(before_host_processes)
+        or _socket_listener_pids(before_host_rows, port=8360)
+        or host_ready_processes is None
+        or not host_ready_listener_pids
+        or not set(host_ready_listener_pids).issubset(host_process_pids)
+        or not host_ready_owners.issubset(host_ready_processes)
+        or not after_teardown_owners.issubset({controller_pid})
+    ):
+        raise ProfileValidationError(
+            "profile evidence process census socket ownership differs"
+        )
+
+    if (
+        process_census.get("controller_pid") != controller_pid
+        or process_census.get("driver_pid") != controller_pid
+        or process_census.get("host_prelaunch_pid") != host_prelaunch_pid
+        or process_census.get("host_worker_pid") != host_worker_pid
+        or process_census.get("launched_pids") != launched_pids
+        or process_census.get("socket_owner_pids") != sorted(socket_owners)
+        or process_census.get("python_child_pids") != python_child_pids
+        or process_census.get("python_pids") != python_pids
+        or process_census.get("guarded_pids") != guarded_pids
+        or process_census.get("canary_pids") != canary_pids
+        or process_census.get("uncovered_pids") != uncovered_pids
+        or process_census.get("guard_events_valid") is not True
+        or process_census.get("complete") is not True
+        or uncovered_pids
+        or not set(canary_pids).issubset(guarded_pids)
+    ):
+        raise ProfileValidationError("profile evidence process census identity differs")
+    driver_exchange = evidence.get("driver_exchange")
+    if (
+        not isinstance(driver_exchange, Mapping)
+        or set(driver_exchange)
+        != {
+            "status",
+            "step_id",
+            "start_ready",
+            "active_character_set",
+            "turn_completed",
+            "turn_timed_out",
+            "game_output_count",
+            "failure_code",
+            "process_pid",
+        }
+        or driver_exchange.get("status") != "completed"
+        or not isinstance(driver_exchange.get("step_id"), str)
+        or _SAFE_RUN_ID.fullmatch(driver_exchange.get("step_id", "")) is None
+        or driver_exchange.get("start_ready") is not True
+        or driver_exchange.get("active_character_set") is not True
+        or driver_exchange.get("turn_completed") is not True
+        or driver_exchange.get("turn_timed_out") is not False
+        or type(driver_exchange.get("game_output_count")) is not int
+        or driver_exchange.get("game_output_count") < 1
+        or driver_exchange.get("failure_code") is not None
+        or driver_exchange.get("process_pid") != controller_pid
+    ):
+        raise ProfileValidationError("profile evidence lifecycle exchange is incomplete")
+
+    _validate_worker_shutdown_evidence(
+        evidence.get("worker_shutdown"),
+        run_id=evidence["run_id"],
+        controller_pid=controller_pid,
+        worker_pid=host_worker_pid,
+    )
+
+    if not _valid_command(evidence.get("host_command")):
+        raise ProfileValidationError("profile evidence command is invalid")
+    if not _valid_controller_command(evidence.get("runner_command")):
+        raise ProfileValidationError("profile evidence command is invalid")
+    if evidence.get("host_command") != command:
+        raise ProfileValidationError("profile evidence host command differs")
+
+    teardown = evidence.get("teardown")
+    valid_teardown = {
+        "server_stopped": True,
+        "port_8360_free": True,
+        "lock_released": True,
+    }
+    valid_teardown_with_player_port = {
+        **valid_teardown,
+        "port_8370_free": True,
+    }
+    if teardown not in (valid_teardown, valid_teardown_with_player_port):
+        raise ProfileValidationError("profile evidence teardown is incomplete")
+
+    calls = evidence.get("calls")
+    if not isinstance(calls, list) or len(calls) != call_count:
+        raise ProfileValidationError("profile evidence call count differs")
+    evidence_sites: dict[tuple[str, int, str], int] = {}
+    call_fields = {
+        "sequence",
+        "task",
+        "source_file",
+        "source_line",
+        "source_file_sha256",
+        "source_sha",
+        "command",
+        "pythonpath",
+    }
+    for index, call in enumerate(calls, start=1):
+        _require_keys(call, call_fields, "recorded router call")
+        task = call.get("task")
+        source_file = call.get("source_file")
+        source_line = call.get("source_line")
+        source_file_sha256 = call.get("source_file_sha256")
+        if (
+            type(call.get("sequence")) is not int
+            or call.get("sequence") != index
+            or not isinstance(task, str)
+            or _SAFE_TASK.fullmatch(task) is None
+            or not isinstance(source_file, str)
+            or type(source_line) is not int
+            or source_line < 1
+            or not isinstance(source_file_sha256, str)
+            or re.fullmatch(r"[0-9a-f]{64}", source_file_sha256) is None
+            or call.get("source_sha") != source_sha
+            or call.get("command") != command
+            or call.get("pythonpath") != pythonpath
+        ):
+            raise ProfileValidationError("profile evidence contains an invalid router call")
+        input_key = ("call_source", source_file)
+        if validator_input_snapshots is not None:
+            source_bytes = validator_input_snapshots.get(input_key)
+            if not isinstance(source_bytes, bytes):
+                raise ProfileValidationError(
+                    "recorded router call source copy is missing"
+                )
+        else:
+            source_path = _safe_source_path(
+                project_root, source_file, "recorded router call source"
+            )
+            try:
+                source_bytes = source_path.read_bytes()
+            except OSError as exc:
+                raise ProfileValidationError(
+                    "recorded router call source cannot be read"
+                ) from exc
+        try:
+            line_count = len(source_bytes.decode("utf-8").splitlines())
+        except UnicodeError as exc:
+            raise ProfileValidationError(
+                "recorded router call source cannot be read"
+            ) from exc
+        if source_line > line_count:
+            raise ProfileValidationError("recorded router call line is outside source file")
+        if hashlib.sha256(source_bytes).hexdigest() != source_file_sha256:
+            raise ProfileValidationError("recorded router call source hash differs")
+        if captured_validator_inputs is not None:
+            prior_source = captured_validator_inputs.setdefault(
+                input_key, source_bytes
+            )
+            if prior_source != source_bytes:
+                raise ProfileValidationError(
+                    "recorded router call source copy is inconsistent"
+                )
+        evidence_sites[(source_file, source_line, source_file_sha256)] = (
+            evidence_sites.get((source_file, source_line, source_file_sha256), 0) + 1
+        )
+
+    normalized_sites = [
+        {
+            "source_file": source_file,
+            "source_line": source_line,
+            "source_file_sha256": source_file_sha256,
+            "count": count,
+        }
+        for (source_file, source_line, source_file_sha256), count
+        in sorted(evidence_sites.items())
+    ]
+    if (
+        type(evidence.get("call_count")) is not int
+        or evidence.get("call_count") != call_count
+        or evidence.get("call_sites") != normalized_sites
+        or call_sites != normalized_sites
+    ):
+        raise ProfileValidationError("profile evidence call-site summary differs")
+    if "adv_summary_child" in evidence:
+        _validate_adv_summary_child_evidence(
+            project_root,
+            evidence.get("adv_summary_child"),
+            run_id=evidence["run_id"],
+            source_sha=source_sha,
+            pythonpath=pythonpath,
+            worker_pid=host_worker_pid,
+            worker_interpreter=evidence.get("worker_interpreter"),
+            guard_events=guard_events,
+            evidence_directory=path.parent,
+            retained_artifacts=evidence.get("summary_child_artifacts"),
+            trusted_summary_source=trusted_summary_source,
+        )
+    summary_child_value = evidence.get("adv_summary_child")
+    launch_count = (
+        summary_child_value.get("launch_count")
+        if isinstance(summary_child_value, Mapping)
+        else None
+    )
+    retention_required = (
+        "teardown_evidence" in evidence
+        and isinstance(launch_count, int)
+        and launch_count > 0
+    )
+    retention_present = "summary_child_retention" in evidence
+    if retention_required and not retention_present:
+        raise ProfileValidationError(
+            "profile evidence summary child retention proof is missing"
+        )
+    if retention_present and not retention_required:
+        raise ProfileValidationError(
+            "profile evidence summary child retention proof is unexpected"
+        )
+    if retention_present:
+        _validate_summary_child_retention_evidence(
+            evidence.get("summary_child_retention"),
+            artifacts_present="summary_child_artifacts" in evidence,
+        )
+
+
+def _validate_summary_child_retention_evidence(
+    value: Any,
+    *,
+    artifacts_present: bool,
+) -> None:
+    fields = {"succeeded", "failure_code", "partial_artifact_count"}
+    if not isinstance(value, Mapping) or set(value) != fields:
+        raise ProfileValidationError("summary child retention evidence is malformed")
+    succeeded = value.get("succeeded")
+    failure_code = value.get("failure_code")
+    partial_artifact_count = value.get("partial_artifact_count")
+    if (
+        type(succeeded) is not bool
+        or type(partial_artifact_count) is not int
+        or partial_artifact_count < 0
+    ):
+        raise ProfileValidationError("summary child retention evidence is malformed")
+    if succeeded:
+        if failure_code is not None or not artifacts_present:
+            raise ProfileValidationError(
+                "summary child retention evidence contradicts outcome"
+            )
+    else:
+        if (
+            not isinstance(failure_code, str)
+            or not failure_code
+            or artifacts_present
+        ):
+            raise ProfileValidationError(
+                "summary child retention evidence contradicts outcome"
+            )
+
+
+def _validate_adv_summary_child_evidence(
+    project_root: Path,
+    value: Any,
+    *,
+    run_id: str,
+    source_sha: str,
+    pythonpath: str,
+    worker_pid: int,
+    worker_interpreter: Any,
+    guard_events: list[dict[str, Any]],
+    evidence_directory: Path | None,
+    retained_artifacts: Any = None,
+    trusted_summary_source: tuple[str, bytes] | None = None,
+) -> None:
+    child_fields = {
+        "schema_version",
+        "adapter_installed",
+        "launch_count",
+        "launches",
+        "calls",
+        "failure_code",
+        "evidence_path",
+        "evidence_sha256",
+        "record_count",
+    }
+    _require_keys(value, child_fields, "summary child evidence")
+    directory = _profile_sidecar_directory(
+        project_root, run_id, evidence_directory=evidence_directory
+    )
+    expected_path = (directory / "adv-summary-child.jsonl").as_posix()
+    digest = value.get("evidence_sha256")
+    launch_count = value.get("launch_count")
+    record_count = value.get("record_count")
+    launches = value.get("launches")
+    calls = value.get("calls")
+    if (
+        type(value.get("schema_version")) is not int
+        or value.get("schema_version") != 1
+        or value.get("adapter_installed") is not True
+        or value.get("failure_code") is not None
+        or value.get("evidence_path") != expected_path
+        or not isinstance(digest, str)
+        or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+        or type(launch_count) is not int
+        or launch_count < 0
+        or launch_count > 8
+        or type(record_count) is not int
+        or record_count != launch_count
+        or not isinstance(launches, list)
+        or len(launches) != launch_count
+        or not isinstance(calls, list)
+        or len(calls) != 2 * launch_count
+        or type(worker_pid) is not int
+        or worker_pid <= 0
+        or not isinstance(worker_interpreter, Mapping)
+    ):
+        raise ProfileValidationError("summary child evidence identity differs")
+
+    path = _safe_source_path(project_root, expected_path, "summary child evidence")
+    raw = _read_bounded_evidence(path, allow_empty=True)
+    if hashlib.sha256(raw).hexdigest() != digest:
+        raise ProfileValidationError("summary child evidence hash differs")
+    if raw and not raw.endswith(b"\n"):
+        raise ProfileValidationError("summary child evidence is incomplete")
+    try:
+        records: list[dict[str, Any]] = []
+        for line in raw.splitlines():
+            if not line:
+                raise ValueError("blank summary child evidence line")
+            record = json.loads(
+                line.decode("ascii"),
+                object_pairs_hook=_unique_object,
+                parse_constant=_reject_json_constant,
+            )
+            if not isinstance(record, Mapping):
+                raise ValueError("summary child evidence row is not an object")
+            records.append(dict(record))
+    except (UnicodeError, json.JSONDecodeError, ValueError) as exc:
+        raise ProfileValidationError("summary child evidence is malformed") from exc
+    if len(records) != record_count:
+        raise ProfileValidationError("summary child evidence record count differs")
+    if launch_count == 0:
+        if retained_artifacts is not None:
+            raise ProfileValidationError(
+                "summary child empty launch has retained artifacts"
+            )
+        return
+
+    retained = _load_retained_summary_artifacts(
+        project_root,
+        retained_artifacts,
+        run_id=run_id,
+        evidence_directory=evidence_directory,
+    )
+    from scripts import live_gate_preflight_profile_runner as profile_runner
+
+    if trusted_summary_source is None:
+        try:
+            source_at_sha = profile_runner._git_source_bytes_at_sha(
+                source_sha, "core/ai/adv_summary.py"
+            )
+        except profile_runner.CharacterizationError as exc:
+            raise ProfileValidationError(
+                "trusted summary child source identity is unavailable"
+            ) from exc
+    elif (
+        not isinstance(trusted_summary_source, tuple)
+        or len(trusted_summary_source) != 2
+        or trusted_summary_source[0] != source_sha
+        or not isinstance(trusted_summary_source[1], bytes)
+        or not trusted_summary_source[1]
+    ):
+        raise ProfileValidationError(
+            "trusted summary child source snapshot identity differs"
+        )
+    else:
+        source_at_sha = trusted_summary_source[1]
+    retained_script_source = retained.get("script_source")
+    if not isinstance(retained_script_source, bytes):
+        raise ProfileValidationError("retained summary child source is missing")
+    if retained_script_source != source_at_sha:
+        raise ProfileValidationError(
+            "retained summary child source differs from declared source SHA"
+        )
+    script_hash = hashlib.sha256(retained_script_source).hexdigest()
+    try:
+        tracker = json.loads(
+            retained["party_tracker"].decode("utf-8"),
+            object_pairs_hook=_unique_object,
+            parse_constant=_reject_json_constant,
+        )
+    except (UnicodeError, json.JSONDecodeError, ValueError) as exc:
+        raise ProfileValidationError(
+            "retained summary child party tracker is malformed"
+        ) from exc
+    module_name = tracker.get("module") if isinstance(tracker, Mapping) else None
+    if not isinstance(module_name, str) or not module_name.strip():
+        raise ProfileValidationError("retained summary child module identity differs")
+    module_name = module_name.replace(" ", "_")
+    if (
+        module_name in (".", "..")
+        or "/" in module_name
+        or "\\" in module_name
+        or "\x00" in module_name
+    ):
+        raise ProfileValidationError("retained summary child module identity differs")
+    final_outputs = retained["final_outputs"]
+    global_latest_writes: dict[str, dict[str, Any]] = {}
+    retained_write_paths: set[str] = set()
+
+    launch_fields = {
+        "sequence",
+        "command_sha256",
+        "script_sha256",
+        "working_directory",
+        "parent_pid",
+        "parent_process_group_id",
+        "prelaunch_canary_pid",
+        "prelaunch_startup_observed_at_ns",
+        "child_pid",
+        "child_process_group_id",
+        "environment_sha256",
+        "interpreter",
+        "returncode",
+        "call_evidence_count",
+        "summary_child_succeeded",
+    }
+    record_fields = {
+        "schema_version",
+        "run_id",
+        "pid",
+        "process_group_id",
+        "process_role",
+        "command_sha256",
+        "environment_sha256",
+        "startup_observed_at_ns",
+        "interpreter",
+        "source_sha",
+        "pythonpath",
+        "script_sha256",
+        "working_directory",
+        "area_id",
+        "leaving_location_name",
+        "router_call_count",
+        "calls",
+        "stub_failure_code",
+        "provider_request_attempted",
+        "summary_output_persisted",
+        "canonical_writes",
+        "discarded_json_writes",
+    }
+    call_fields = {
+        "sequence",
+        "task",
+        "source_file",
+        "source_line",
+        "source_file_sha256",
+        "source_sha",
+        "command_sha256",
+        "environment_sha256",
+        "process_id",
+        "process_role",
+        "response_kind",
+        "response_sha256",
+    }
+    child_call_fields = {
+        "sequence",
+        "task",
+        "source_file",
+        "source_line",
+        "source_file_sha256",
+        "response_kind",
+        "response_sha256",
+        "response_value_sha256",
+        "failure_code",
+    }
+    write_fields = {
+        "sequence",
+        "source_file",
+        "source_line",
+        "path",
+        "sha256",
+        "size_bytes",
+        "retained_artifact",
+    }
+    script_relative = "tmp/combat_capture/core/ai/adv_summary.py"
+    expected_children_by_hash: dict[str, list[int]] = {}
+    for index, (launch, record) in enumerate(zip(launches, records), start=1):
+        _require_keys(launch, launch_fields, "summary child launch")
+        _require_keys(record, record_fields, "summary child record")
+        command_hash = launch.get("command_sha256")
+        environment_hash = launch.get("environment_sha256")
+        prelaunch_pid = launch.get("prelaunch_canary_pid")
+        child_pid = record.get("pid")
+        prelaunch_timestamp = launch.get("prelaunch_startup_observed_at_ns")
+        if (
+            type(launch.get("sequence")) is not int
+            or launch.get("sequence") != index
+            or not isinstance(command_hash, str)
+            or re.fullmatch(r"[0-9a-f]{64}", command_hash) is None
+            or not isinstance(launch.get("script_sha256"), str)
+            or launch.get("script_sha256") != script_hash
+            or launch.get("working_directory")
+            != str(project_root / "tmp" / "combat_capture")
+            or launch.get("parent_pid") != worker_pid
+            or launch.get("parent_process_group_id") != worker_pid
+            or type(prelaunch_pid) is not int
+            or prelaunch_pid <= 0
+            or type(prelaunch_timestamp) is not int
+            or prelaunch_timestamp <= 0
+            or type(child_pid) is not int
+            or child_pid <= 0
+            or child_pid == prelaunch_pid
+            or launch.get("child_pid") != child_pid
+            or launch.get("child_process_group_id") != worker_pid
+            or launch.get("environment_sha256") != environment_hash
+            or not isinstance(environment_hash, str)
+            or re.fullmatch(r"[0-9a-f]{64}", environment_hash) is None
+            or launch.get("interpreter") != worker_interpreter
+            or type(launch.get("returncode")) is not int
+            or launch.get("returncode") != 0
+            or type(launch.get("call_evidence_count")) is not int
+            or launch.get("call_evidence_count") != 2
+            or launch.get("summary_child_succeeded") is not True
+        ):
+            raise ProfileValidationError("summary child launch identity differs")
+
+        internal_calls = record.get("calls")
+        writes = record.get("canonical_writes")
+        area_id = record.get("area_id")
+        leaving_name = record.get("leaving_location_name")
+        if (
+            not isinstance(area_id, str)
+            or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", area_id) is None
+            or not isinstance(leaving_name, str)
+            or not leaving_name
+            or len(leaving_name) > 512
+        ):
+            raise ProfileValidationError("summary child location identity differs")
+        preferred_area = (
+            PurePosixPath("tmp/combat_capture")
+            / "modules"
+            / module_name
+            / "areas"
+            / (area_id + ".json")
+        )
+        legacy_area = (
+            PurePosixPath("tmp/combat_capture")
+            / "modules"
+            / module_name
+            / (area_id + ".json")
+        )
+        if preferred_area.as_posix() in final_outputs:
+            expected_area = preferred_area
+        elif legacy_area.as_posix() in final_outputs:
+            expected_area = legacy_area
+        else:
+            raise ProfileValidationError(
+                "retained summary child area artifact is unavailable"
+            )
+        expected_write_counts = {
+            "summary_dump.json": 1,
+            "trimmed_summary_dump.json": 1,
+            "dialogue_summary.json": 1,
+            "journal.json": 1,
+            expected_area.as_posix().removeprefix("tmp/combat_capture/"): 2,
+        }
+        if not isinstance(internal_calls, list) or len(internal_calls) != 2:
+            raise ProfileValidationError("summary child router call evidence differs")
+        if (
+            type(record.get("schema_version")) is not int
+            or record.get("schema_version") != 1
+            or record.get("run_id") != run_id
+            or record.get("pid") != child_pid
+            or type(record.get("process_group_id")) is not int
+            or record.get("process_group_id") != worker_pid
+            or record.get("process_role") != "host"
+            or record.get("command_sha256") != command_hash
+            or record.get("environment_sha256") != environment_hash
+            or type(record.get("startup_observed_at_ns")) is not int
+            or record.get("startup_observed_at_ns") <= 0
+            or record.get("interpreter") != worker_interpreter
+            or record.get("source_sha") != source_sha
+            or record.get("pythonpath") != pythonpath
+            or record.get("script_sha256") != script_hash
+            or record.get("working_directory") != launch.get("working_directory")
+            or record.get("area_id") != area_id
+            or record.get("leaving_location_name") != leaving_name
+            or type(record.get("router_call_count")) is not int
+            or record.get("router_call_count") != 2
+            or record.get("stub_failure_code") is not None
+            or record.get("provider_request_attempted") is not False
+            or record.get("summary_output_persisted") is not True
+            or not isinstance(writes, list)
+            or len(writes) != 6
+            or any(
+                not isinstance(item, Mapping) or set(item) != write_fields
+                for item in writes
+            )
+            or record.get("discarded_json_writes") != []
+        ):
+            raise ProfileValidationError("summary child router or persistence evidence differs")
+
+        observed_write_counts: dict[str, int] = {}
+        latest_writes: dict[str, Mapping[str, Any]] = {}
+        latest_write_bytes: dict[str, bytes] = {}
+        for write_index, write in enumerate(writes, start=1):
+            write_path = write.get("path")
+            write_digest = write.get("sha256")
+            size_bytes = write.get("size_bytes")
+            retained_descriptor = write.get("retained_artifact")
+            if (
+                type(write.get("sequence")) is not int
+                or write.get("sequence") != write_index
+                or write.get("source_file") != script_relative
+                or type(write.get("source_line")) is not int
+                or write.get("source_line", 0) <= 0
+                or not isinstance(write_path, str)
+                or not isinstance(write_digest, str)
+                or re.fullmatch(r"[0-9a-f]{64}", write_digest) is None
+                or type(size_bytes) is not int
+                or size_bytes <= 0
+                or not isinstance(retained_descriptor, Mapping)
+            ):
+                raise ProfileValidationError("summary child canonical write differs")
+            observed_write_counts[write_path] = (
+                observed_write_counts.get(write_path, 0) + 1
+            )
+            latest_writes[write_path] = write
+            retained_source_path = "tmp/combat_capture/" + write_path
+            retained_write_raw = _read_retained_child_write(
+                project_root,
+                retained_descriptor,
+                evidence_directory=evidence_directory,
+                run_id=run_id,
+                source_sha=source_sha,
+                command_sha256=command_hash,
+                process_id=child_pid,
+                write_sequence=write_index,
+                source_path=retained_source_path,
+                expected_sha256=write_digest,
+                expected_size_bytes=size_bytes,
+            )
+            retained_path = retained_descriptor.get("path")
+            if not isinstance(retained_path, str):
+                raise ProfileValidationError(
+                    "summary child retained write path is malformed"
+                )
+            if retained_path in retained_write_paths:
+                raise ProfileValidationError(
+                    "summary child retained write path is duplicated"
+                )
+            retained_write_paths.add(retained_path)
+            latest_write_bytes[write_path] = retained_write_raw
+            global_latest_writes[retained_source_path] = {
+                "process_id": child_pid,
+                "sequence": write_index,
+                "sha256": write_digest,
+                "size_bytes": size_bytes,
+            }
+        if observed_write_counts != expected_write_counts:
+            raise ProfileValidationError("summary child canonical write set differs")
+
+        for write_path, write in latest_writes.items():
+            raw_output = latest_write_bytes[write_path]
+            if write_path in {
+                "summary_dump.json",
+                "trimmed_summary_dump.json",
+                "dialogue_summary.json",
+            }:
+                try:
+                    parsed_output = json.loads(
+                        raw_output.decode("utf-8"),
+                        object_pairs_hook=_unique_object,
+                        parse_constant=_reject_json_constant,
+                    )
+                except (UnicodeError, json.JSONDecodeError, ValueError) as exc:
+                    raise ProfileValidationError(
+                        "summary child summary artifact is malformed"
+                    ) from exc
+                if not isinstance(parsed_output, list):
+                    raise ProfileValidationError(
+                        "summary child summary artifact is not a list"
+                    )
+
+        expected_call_kinds = ("summary_text", "location_json")
+        for call_index, (internal_call, response_kind) in enumerate(
+            zip(internal_calls, expected_call_kinds), start=1
+        ):
+            if (
+                not isinstance(internal_call, Mapping)
+                or set(internal_call) != child_call_fields
+                or type(internal_call.get("sequence")) is not int
+                or internal_call.get("sequence") != call_index
+                or internal_call.get("task") != "adventure_summary"
+                or internal_call.get("source_file") != script_relative
+                or type(internal_call.get("source_line")) is not int
+                or internal_call.get("source_line", 0) <= 0
+                or internal_call.get("source_file_sha256") != script_hash
+                or internal_call.get("response_kind") != response_kind
+                or not isinstance(internal_call.get("response_sha256"), str)
+                or re.fullmatch(
+                    r"[0-9a-f]{64}", internal_call["response_sha256"]
+                )
+                is None
+                or not isinstance(
+                    internal_call.get("response_value_sha256"), str
+                )
+                or re.fullmatch(
+                    r"[0-9a-f]{64}", internal_call["response_value_sha256"]
+                )
+                is None
+                or internal_call.get("failure_code") is not None
+                or (
+                    response_kind == "summary_text"
+                    and internal_call.get("response_sha256")
+                    != internal_call.get("response_value_sha256")
+                )
+            ):
+                raise ProfileValidationError(
+                    "summary child router response evidence differs"
+                )
+            call = calls[(index - 1) * 2 + call_index - 1]
+            _require_keys(call, call_fields, "summary child router call")
+            if (
+                type(call.get("sequence")) is not int
+                or call.get("sequence") != (index - 1) * 2 + call_index
+                or call.get("task") != internal_call.get("task")
+                or call.get("source_file") != internal_call.get("source_file")
+                or call.get("source_line") != internal_call.get("source_line")
+                or call.get("source_file_sha256")
+                != internal_call.get("source_file_sha256")
+                or call.get("source_sha") != source_sha
+                or call.get("command_sha256") != command_hash
+                or call.get("environment_sha256") != environment_hash
+                or call.get("process_id") != child_pid
+                or call.get("process_role") != "adv_summary_child"
+                or call.get("response_kind") != response_kind
+                or call.get("response_sha256")
+                != internal_call.get("response_sha256")
+            ):
+                raise ProfileValidationError("summary child router call differs")
+
+        summary_digest = internal_calls[0].get("response_sha256")
+        try:
+            journal = json.loads(
+                latest_write_bytes["journal.json"].decode("utf-8"),
+                object_pairs_hook=_unique_object,
+                parse_constant=_reject_json_constant,
+            )
+            journal_entries = (
+                journal.get("entries") if isinstance(journal, Mapping) else None
+            )
+            normalized_name = re.sub(
+                r"^Room\s+\d+\s*:\s*",
+                "",
+                leaving_name.strip(),
+                flags=re.IGNORECASE,
+            )
+            latest_journal_entry = (
+                journal_entries[-1]
+                if isinstance(journal_entries, list) and journal_entries
+                else None
+            )
+            if (
+                not isinstance(latest_journal_entry, Mapping)
+                or latest_journal_entry.get("location") != normalized_name
+                or not isinstance(latest_journal_entry.get("summary"), str)
+                or hashlib.sha256(
+                    latest_journal_entry["summary"].encode("utf-8")
+                ).hexdigest()
+                != summary_digest
+            ):
+                raise ProfileValidationError(
+                    "summary child journal does not contain the stub response"
+                )
+            area = json.loads(
+                latest_write_bytes[expected_area.as_posix().removeprefix(
+                    "tmp/combat_capture/"
+                )].decode("utf-8"),
+                object_pairs_hook=_unique_object,
+                parse_constant=_reject_json_constant,
+            )
+            area_locations = (
+                area.get("locations") if isinstance(area, Mapping) else None
+            )
+            matching_locations = [
+                location
+                for location in area_locations or []
+                if isinstance(location, Mapping)
+                and (
+                    location.get("name") == normalized_name
+                    or (
+                        isinstance(location.get("name"), str)
+                        and re.sub(
+                            r"^Room\s+\d+\s*:\s*",
+                            "",
+                            location["name"].strip(),
+                            flags=re.IGNORECASE,
+                        )
+                        == normalized_name
+                    )
+                    or location.get("source_room_title") == normalized_name
+                )
+            ]
+            if (
+                len(matching_locations) != 1
+                or not isinstance(
+                    matching_locations[0].get("adventureSummary"), str
+                )
+                or hashlib.sha256(
+                    matching_locations[0]["adventureSummary"].encode("utf-8")
+                ).hexdigest()
+                != summary_digest
+            ):
+                raise ProfileValidationError(
+                    "summary child area does not contain the stub response"
+                )
+        except (UnicodeError, json.JSONDecodeError, ValueError) as exc:
+            raise ProfileValidationError(
+                "summary child persisted state is malformed"
+            ) from exc
+
+        for process_pid, process_group_id, observed_at_ns in (
+            (prelaunch_pid, prelaunch_pid, prelaunch_timestamp),
+            (
+                child_pid,
+                worker_pid,
+                record.get("startup_observed_at_ns"),
+            ),
+        ):
+            process_events = [
+                event for event in guard_events if event.get("pid") == process_pid
+            ]
+            if not validate_guard_event_records(
+                process_events,
+                expected_run_id=run_id,
+                expected_pid=process_pid,
+                require_startup_canaries=True,
+            ):
+                raise ProfileValidationError(
+                    "summary child process guard canaries are incomplete"
+                )
+            startup = process_events[0]
+            if (
+                startup.get("event_type") != "guard_startup"
+                or startup.get("process_role") != "host"
+                or startup.get("process_group_id") != process_group_id
+                or startup.get("command_sha256") != command_hash
+                or startup.get("interpreter") != worker_interpreter
+                or startup.get("working_directory")
+                != launch.get("working_directory")
+                or type(observed_at_ns) is not int
+                or observed_at_ns <= startup.get("observed_at_ns", 0)
+            ):
+                raise ProfileValidationError(
+                    "summary child process guard identity differs"
+                )
+            starts = [
+                event
+                for event in guard_events
+                if event.get("event_type") == "subprocess_started"
+                and event.get("pid") == worker_pid
+                and event.get("child_pid") == process_pid
+            ]
+            if (
+                len(starts) != 1
+                or starts[0].get("process_role") != "host"
+                or starts[0].get("process_group_id") != worker_pid
+                or starts[0].get("command_sha256") != command_hash
+                or starts[0].get("child_is_python") is not True
+            ):
+                raise ProfileValidationError(
+                    "summary child process launch is not reconciled"
+                )
+            expected_children_by_hash.setdefault(command_hash, []).append(process_pid)
+
+    if set(final_outputs) != set(global_latest_writes):
+        raise ProfileValidationError(
+            "retained summary child final output set differs from writes"
+        )
+    for source_path, write in global_latest_writes.items():
+        artifact = final_outputs[source_path]
+        if artifact.get("last_write") != write:
+            raise ProfileValidationError(
+                "retained summary child final output provenance differs"
+            )
+
+    _validate_summary_child_subprocess_authorization(
+        guard_events,
+        worker_pid=worker_pid,
+        expected_children_by_hash=expected_children_by_hash,
+    )
+
+
+def _validate_summary_child_subprocess_authorization(
+    guard_events: list[dict[str, Any]],
+    *,
+    worker_pid: int,
+    expected_children_by_hash: Mapping[str, list[int]],
+) -> None:
+    """Reconcile every expected summary-child launch and its startup canary."""
+    parent_events = [
+        event for event in guard_events if event.get("pid") == worker_pid
+    ]
+    for command_hash, expected_pids in expected_children_by_hash.items():
+        if (
+            not isinstance(command_hash, str)
+            or re.fullmatch(r"[0-9a-f]{64}", command_hash) is None
+            or not isinstance(expected_pids, list)
+            or any(type(pid) is not int or pid <= 0 for pid in expected_pids)
+        ):
+            raise ProfileValidationError(
+                "summary child subprocess authorization is not reconciled"
+            )
+        started_pids = [
+            event.get("child_pid")
+            for event in parent_events
+            if event.get("event_type") == "subprocess_started"
+            and event.get("command_sha256") == command_hash
+        ]
+        allowed_attempts = [
+            event
+            for event in parent_events
+            if event.get("event_type") == "subprocess_attempt"
+            and event.get("decision") == "allowed"
+            and event.get("command_sha256") == command_hash
+        ]
+        if (
+            any(type(pid) is not int or pid <= 0 for pid in started_pids)
+            or sorted(started_pids) != sorted(expected_pids)
+            or len(allowed_attempts) != len(expected_pids)
+        ):
+            raise ProfileValidationError(
+                "summary child subprocess authorization is not reconciled"
+            )
+
+
+def _load_retained_summary_artifacts(
+    project_root: Path,
+    value: Any,
+    *,
+    run_id: str,
+    evidence_directory: Path | None,
+) -> dict[str, Any]:
+    manifest_fields = {
+        "schema_version",
+        "run_id",
+        "capture_phase",
+        "artifacts",
+    }
+    if (
+        not isinstance(value, Mapping)
+        or set(value) != manifest_fields
+        or type(value.get("schema_version")) is not int
+        or value.get("schema_version") != 1
+        or value.get("run_id") != run_id
+        or value.get("capture_phase") != "after_child_before_cleanup"
+        or not isinstance(value.get("artifacts"), list)
+        or evidence_directory is None
+    ):
+        raise ProfileValidationError(
+            "summary child retained artifact manifest is missing or malformed"
+        )
+    directory = _profile_sidecar_directory(
+        project_root, run_id, evidence_directory=evidence_directory
+    )
+    party_tracker: bytes | None = None
+    script_source: bytes | None = None
+    final_outputs: dict[str, dict[str, Any]] = {}
+    retained_paths: set[str] = set()
+    for artifact in value["artifacts"]:
+        if not isinstance(artifact, Mapping):
+            raise ProfileValidationError(
+                "summary child retained artifact descriptor is malformed"
+            )
+        role = artifact.get("role")
+        common_fields = {
+            "role",
+            "source_path",
+            "path",
+            "sha256",
+            "size_bytes",
+            "run_id",
+            "provenance",
+        }
+        if role == "party_tracker":
+            expected_fields = common_fields
+            expected_source = "tmp/combat_capture/party_tracker.json"
+            expected_path = (
+                directory / "retained" / "summary-child" / "party-tracker.json"
+            ).as_posix()
+            expected_provenance = "sandbox_state_after_child_before_cleanup"
+        elif role == "script_source":
+            expected_fields = common_fields
+            expected_source = "tmp/combat_capture/core/ai/adv_summary.py"
+            expected_path = (
+                directory
+                / "retained"
+                / "summary-child"
+                / "source"
+                / "adv_summary.py"
+            ).as_posix()
+            expected_provenance = "sandbox_executed_source_before_cleanup"
+        elif role == "final_output":
+            expected_fields = common_fields | {
+                "last_write",
+                "final_write_matches_last_write",
+            }
+            source_path = artifact.get("source_path")
+            if not isinstance(source_path, str):
+                raise ProfileValidationError(
+                    "summary child retained output source is malformed"
+                )
+            source = PurePosixPath(source_path)
+            if (
+                source.is_absolute()
+                or ".." in source.parts
+                or "\\" in source_path
+                or not source_path.startswith("tmp/combat_capture/")
+                or len(source.parts) < 3
+            ):
+                raise ProfileValidationError(
+                    "summary child retained output source is unsafe"
+                )
+            expected_source = source_path
+            expected_path = (
+                directory
+                / "retained"
+                / "summary-child"
+                / "final"
+                / (
+                    hashlib.sha256(source_path.encode("ascii")).hexdigest()[:16]
+                    + "-"
+                    + source.name
+                )
+            ).as_posix()
+            # journal.json is the only canonical write the host legitimately
+            # rewrites after the child exits; every other final output must
+            # match the child's own last recorded write exactly.
+            final_write_matches_last_write = artifact.get(
+                "final_write_matches_last_write"
+            )
+            if source_path == "tmp/combat_capture/journal.json":
+                if type(final_write_matches_last_write) is not bool:
+                    raise ProfileValidationError(
+                        "summary child retained output host-rewrite flag is malformed"
+                    )
+                expected_provenance = (
+                    "canonical_json_write_final_state_before_cleanup"
+                    if final_write_matches_last_write
+                    else "host_rewrote_after_child_final_state_before_cleanup"
+                )
+            else:
+                if final_write_matches_last_write is not True:
+                    raise ProfileValidationError(
+                        "summary child retained output must match the child's last write"
+                    )
+                expected_provenance = (
+                    "canonical_json_write_final_state_before_cleanup"
+                )
+        else:
+            raise ProfileValidationError(
+                "summary child retained artifact role is invalid"
+            )
+        digest = artifact.get("sha256")
+        size_bytes = artifact.get("size_bytes")
+        artifact_path = artifact.get("path")
+        if (
+            set(artifact) != expected_fields
+            or artifact.get("source_path") != expected_source
+            or artifact_path != expected_path
+            or not isinstance(digest, str)
+            or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+            or type(size_bytes) is not int
+            or size_bytes < 1
+            or size_bytes > _PROFILE_EVIDENCE_MAX_BYTES
+            or artifact.get("run_id") != run_id
+            or artifact.get("provenance") != expected_provenance
+            or artifact_path in retained_paths
+        ):
+            raise ProfileValidationError(
+                "summary child retained artifact provenance differs"
+            )
+        path = _safe_source_path(
+            project_root, expected_path, "summary child retained artifact"
+        )
+        raw = _read_bounded_evidence(path)
+        if len(raw) != size_bytes or hashlib.sha256(raw).hexdigest() != digest:
+            raise ProfileValidationError(
+                "summary child retained artifact hash differs"
+            )
+        retained_paths.add(expected_path)
+        if role == "script_source":
+            if script_source is not None:
+                raise ProfileValidationError(
+                    "summary child retained source is duplicated"
+                )
+            script_source = raw
+            continue
+        if role == "party_tracker":
+            if party_tracker is not None:
+                raise ProfileValidationError(
+                    "summary child retained party tracker is duplicated"
+                )
+            party_tracker = raw
+            continue
+
+        last_write = artifact.get("last_write")
+        final_write_matches_last_write = artifact.get(
+            "final_write_matches_last_write"
+        )
+        last_write_matches_digest = (
+            isinstance(last_write, Mapping)
+            and last_write.get("sha256") == digest
+            and last_write.get("size_bytes") == size_bytes
+        )
+        if (
+            not isinstance(last_write, Mapping)
+            or set(last_write)
+            != {"process_id", "sequence", "sha256", "size_bytes"}
+            or type(last_write.get("process_id")) is not int
+            or last_write.get("process_id") <= 0
+            or type(last_write.get("sequence")) is not int
+            or last_write.get("sequence") <= 0
+            or type(last_write.get("sha256")) is not str
+            or re.fullmatch(r"[0-9a-f]{64}", last_write["sha256"]) is None
+            or type(last_write.get("size_bytes")) is not int
+            or last_write.get("size_bytes") < 1
+            or final_write_matches_last_write is not last_write_matches_digest
+        ):
+            raise ProfileValidationError(
+                "summary child retained final output write provenance differs"
+            )
+        source_path = artifact["source_path"]
+        if source_path in final_outputs:
+            raise ProfileValidationError(
+                "summary child retained output source is duplicated"
+            )
+        final_outputs[source_path] = {
+            **dict(artifact),
+            "_raw": raw,
+        }
+    if party_tracker is None or script_source is None or not final_outputs:
+        raise ProfileValidationError(
+            "summary child retained artifacts are incomplete"
+        )
+    return {
+        "party_tracker": party_tracker,
+        "script_source": script_source,
+        "final_outputs": final_outputs,
+    }
+
+
+def _read_retained_child_write(
+    project_root: Path,
+    value: Mapping[str, Any],
+    *,
+    evidence_directory: Path | None,
+    run_id: str,
+    source_sha: str,
+    command_sha256: str,
+    process_id: int,
+    write_sequence: int,
+    source_path: str,
+    expected_sha256: str,
+    expected_size_bytes: int,
+) -> bytes:
+    fields = {
+        "path",
+        "source_path",
+        "sha256",
+        "size_bytes",
+        "run_id",
+        "source_sha",
+        "command_sha256",
+        "process_id",
+        "process_role",
+        "write_sequence",
+        "provenance",
+    }
+    if evidence_directory is None:
+        raise ProfileValidationError(
+            "summary child retained write directory is unavailable"
+        )
+    directory = _profile_sidecar_directory(
+        project_root, run_id, evidence_directory=evidence_directory
+    )
+    expected_path = (
+        directory
+        / ("adv-summary-write-%d-%d.json" % (process_id, write_sequence))
+    ).as_posix()
+    if (
+        set(value) != fields
+        or value.get("path") != expected_path
+        or value.get("source_path") != source_path
+        or value.get("sha256") != expected_sha256
+        or type(value.get("size_bytes")) is not int
+        or value.get("size_bytes") != expected_size_bytes
+        or value.get("run_id") != run_id
+        or value.get("source_sha") != source_sha
+        or value.get("command_sha256") != command_sha256
+        or value.get("process_id") != process_id
+        or value.get("process_role") != "host"
+        or value.get("write_sequence") != write_sequence
+        or value.get("provenance") != "guarded_canonical_json_writer"
+    ):
+        raise ProfileValidationError(
+            "summary child retained write provenance differs"
+        )
+    path = _safe_source_path(
+        project_root, expected_path, "summary child retained write snapshot"
+    )
+    raw = _read_bounded_evidence(path)
+    if (
+        len(raw) != expected_size_bytes
+        or hashlib.sha256(raw).hexdigest() != expected_sha256
+    ):
+        raise ProfileValidationError(
+            "summary child retained write snapshot hash differs"
+        )
+    return raw
+
+
+def _validate_worker_shutdown_evidence(
+    value: Any,
+    *,
+    run_id: str,
+    controller_pid: int,
+    worker_pid: int,
+) -> None:
+    fields = {
+        "server_returned",
+        "interrupted",
+        "graceful_shutdown_requested",
+        "signal_received_at_ns",
+        "request",
+    }
+    request_fields = {
+        "schema_version",
+        "run_id",
+        "controller_pid",
+        "worker_pid",
+        "process_group_id",
+        "signal_number",
+        "requested_at_ns",
+        "readiness_succeeded",
+        "exchange_succeeded",
+    }
+    if not isinstance(value, Mapping) or set(value) != fields:
+        raise ProfileValidationError("profile evidence worker shutdown is incomplete")
+    request = value.get("request")
+    received_at_ns = value.get("signal_received_at_ns")
+    if (
+        type(value.get("server_returned")) is not bool
+        or value.get("interrupted") is not True
+        or value.get("graceful_shutdown_requested") is not True
+        or type(received_at_ns) is not int
+        or received_at_ns <= 0
+        or not isinstance(request, Mapping)
+        or set(request) != request_fields
+        or type(request.get("schema_version")) is not int
+        or request.get("schema_version") != 1
+        or request.get("run_id") != run_id
+        or type(request.get("controller_pid")) is not int
+        or request.get("controller_pid") != controller_pid
+        or type(request.get("worker_pid")) is not int
+        or request.get("worker_pid") != worker_pid
+        or type(request.get("process_group_id")) is not int
+        or request.get("process_group_id") != worker_pid
+        or type(request.get("signal_number")) is not int
+        or request.get("signal_number") != int(signal.SIGINT)
+        or type(request.get("requested_at_ns")) is not int
+        or request.get("requested_at_ns") <= 0
+        or request.get("requested_at_ns") > received_at_ns
+        or request.get("readiness_succeeded") is not True
+        or request.get("exchange_succeeded") is not True
+    ):
+        raise ProfileValidationError("profile evidence worker shutdown is incomplete")
+
+
+def _read_profile_guard_events(
+    project_root: Path,
+    journal: Any,
+    *,
+    run_id: str,
+    evidence_directory: Path | None = None,
+) -> list[dict[str, Any]]:
+    fields = {"path", "sha256", "event_count", "complete"}
+    _require_keys(journal, fields, "guard-event journal")
+    directory = _profile_sidecar_directory(
+        project_root, run_id, evidence_directory=evidence_directory
+    )
+    expected_path = (directory / "guard-events.jsonl").as_posix()
+    digest = journal.get("sha256")
+    event_count = journal.get("event_count")
+    if (
+        journal.get("path") != expected_path
+        or not isinstance(digest, str)
+        or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+        or type(event_count) is not int
+        or event_count < 1
+        or journal.get("complete") is not True
+    ):
+        raise ProfileValidationError("profile evidence guard-event journal is incomplete")
+    path = _safe_source_path(project_root, expected_path, "guard-event journal")
+    raw = _read_bounded_evidence(path)
+    if hashlib.sha256(raw).hexdigest() != digest or not raw.endswith(b"\n"):
+        raise ProfileValidationError("profile evidence guard-event journal hash differs")
+    try:
+        events: list[dict[str, Any]] = []
+        for line in raw.splitlines():
+            if not line:
+                raise ValueError("blank guard-event line")
+            event = json.loads(
+                line.decode("ascii"),
+                object_pairs_hook=_unique_object,
+                parse_constant=_reject_json_constant,
+            )
+            if not isinstance(event, Mapping):
+                raise ValueError("guard-event entry is not an object")
+            events.append(dict(event))
+    except (UnicodeError, json.JSONDecodeError, ValueError) as exc:
+        raise ProfileValidationError("profile evidence guard-event journal is invalid") from exc
+    if (
+        len(events) != event_count
+        or not validate_guard_event_records(events, expected_run_id=run_id)
+    ):
+        raise ProfileValidationError("profile evidence guard-event ownership is invalid")
+    return events
+
+
+def _profile_sidecar_directory(
+    project_root: Path,
+    run_id: str,
+    *,
+    evidence_directory: Path | None,
+) -> PurePosixPath:
+    if evidence_directory is None:
+        return PurePosixPath((GUARD_EVENT_ROOT / run_id).as_posix())
+    try:
+        relative = evidence_directory.resolve(strict=True).relative_to(
+            project_root.resolve(strict=True)
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise ProfileValidationError(
+            "profile evidence sidecar directory is missing or unsafe"
+        ) from exc
+    if not relative.parts or relative.parts[0] != "tmp":
+        raise ProfileValidationError("profile evidence sidecar directory is outside tmp")
+    return PurePosixPath(relative.as_posix())
+
+
+def _validate_profile_guarded_processes(
+    *,
+    process_canaries: list[Any],
+    guard_events: list[dict[str, Any]],
+    run_id: str,
+) -> None:
+    canaries = {canary["canary_stage"]: canary for canary in process_canaries}
+    startup_by_pid = {
+        event["pid"]: event
+        for event in guard_events
+        if event.get("event_type") == "guard_startup"
+    }
+    journal_events_by_pid: dict[int, list[dict[str, Any]]] = {}
+    for event in guard_events:
+        journal_events_by_pid.setdefault(event["pid"], []).append(event)
+    for events in journal_events_by_pid.values():
+        events.sort(key=lambda event: event["sequence"])
+    expected = (
+        ("controller-startup", "parent"),
+        ("host-prelaunch", "host"),
+        ("host-startup", "host"),
+    )
+    for stage, role in expected:
+        canary = canaries[stage]
+        startup = startup_by_pid.get(canary["pid"])
+        if (
+            startup is None
+            or startup.get("process_role") != role
+            or startup.get("command_sha256") != canary.get("command_sha256")
+            or startup.get("interpreter") != canary.get("interpreter")
+            or startup.get("working_directory") != canary.get("working_directory")
+            or (role == "host" and startup.get("process_group_id") != canary["pid"])
+        ):
+            raise ProfileValidationError(
+                "profile evidence guard-event process identity differs"
+            )
+        snapshot = canary.get("guard_events")
+        if not isinstance(snapshot, list) or any(
+            event.get("run_id") not in ("", run_id) for event in snapshot
+        ):
+            raise ProfileValidationError(
+                "profile evidence process canary guard-event identity differs"
+            )
+        normalized_snapshot = [
+            {**event, "run_id": run_id} for event in snapshot
+        ]
+        journal_prefix = journal_events_by_pid.get(canary["pid"], [])[
+            : len(normalized_snapshot)
+        ]
+        if journal_prefix != normalized_snapshot:
+            raise ProfileValidationError(
+                "profile evidence process canary guard events differ from journal"
+            )
+
+
+def _read_profile_socket_sample(
+    project_root: Path,
+    sample: Any,
+    *,
+    phase: str,
+    run_id: str,
+    process_canaries: list[Any],
+    guard_events: list[dict[str, Any]],
+    evidence_directory: Path | None = None,
+    checkpoint_run: bool = False,
+    before_host_startup_pids: set[int] | None = None,
+) -> tuple[list[dict[str, Any]], set[int], list[dict[str, Any]], set[int]]:
+    sample_fields = {
+        "phase",
+        "port",
+        "observed",
+        "pids",
+        "listener_pids",
+        "failure_code",
+        "evidence_path",
+        "evidence_sha256",
+    }
+    _require_keys(sample, sample_fields, "process census socket sample")
+    sample_pids = sample.get("pids")
+    listener_pids = sample.get("listener_pids")
+    digest = sample.get("evidence_sha256")
+    directory = _profile_sidecar_directory(
+        project_root, run_id, evidence_directory=evidence_directory
+    )
+    expected_path = (directory / ("socket-sample-%s.json" % phase)).as_posix()
+    if (
+        sample.get("phase") != phase
+        or type(sample.get("port")) is not int
+        or sample.get("port") != 8360
+        or sample.get("observed") is not True
+        or sample.get("failure_code") is not None
+        or not isinstance(sample_pids, list)
+        or any(type(pid) is not int or pid <= 0 for pid in sample_pids)
+        or sample_pids != sorted(set(sample_pids))
+        or not isinstance(listener_pids, list)
+        or any(type(pid) is not int or pid <= 0 for pid in listener_pids)
+        or listener_pids != sorted(set(listener_pids))
+        or sample.get("evidence_path") != expected_path
+        or not isinstance(digest, str)
+        or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+    ):
+        raise ProfileValidationError("profile evidence process census socket sample differs")
+    path = _safe_source_path(project_root, expected_path, "socket sample evidence")
+    raw = _read_bounded_evidence(path)
+    if hashlib.sha256(raw).hexdigest() != digest:
+        raise ProfileValidationError("profile evidence socket sample hash differs")
+    try:
+        sidecar = json.loads(
+            raw.decode("utf-8"),
+            object_pairs_hook=_unique_object,
+            parse_constant=_reject_json_constant,
+        )
+    except (UnicodeError, json.JSONDecodeError, ValueError) as exc:
+        raise ProfileValidationError("profile evidence socket sample is invalid") from exc
+    sidecar_fields = {
+        "schema_version",
+        "run_id",
+        "phase",
+        "observer",
+        "process_scopes",
+        "run_process_pids",
+        "guard_startup_pids",
+        "protocol_samples",
+        "aggregate_counts",
+        "run_owned_rows",
+        "pids",
+        "observed",
+        "failure_code",
+    }
+    _require_keys(sidecar, sidecar_fields, "socket sample evidence")
+    rows = sidecar.get("run_owned_rows")
+    if (
+        type(sidecar.get("schema_version")) is not int
+        or sidecar.get("schema_version") != 3
+        or sidecar.get("run_id") != run_id
+        or sidecar.get("phase") != phase
+        or sidecar.get("observer")
+        != "netstat -anv -W -p tcp and udp; PID filter precedes endpoint parsing"
+        or sidecar.get("observed") is not True
+        or sidecar.get("failure_code") is not None
+        or not isinstance(rows, list)
+        or any(not _valid_profile_socket_row(row) for row in rows)
+    ):
+        raise ProfileValidationError("profile evidence socket sample identity differs")
+    row_pids = {row["pid"] for row in rows}
+    sorted_row_pids = sorted(row_pids)
+    actual_listeners = sorted(_socket_listener_pids(rows, port=8360))
+    if (
+        sidecar.get("pids") != sorted_row_pids
+        or sample_pids != sorted_row_pids
+        or listener_pids != actual_listeners
+    ):
+        raise ProfileValidationError("profile evidence socket sample row summary differs")
+    if any(
+        _profile_socket_has_unrecorded_foreign_endpoint(row, guard_events)
+        for row in rows
+    ):
+        raise ProfileValidationError(
+            "profile evidence socket sample has an unguarded foreign endpoint"
+        )
+
+    scopes = _validate_profile_socket_scopes(
+        sidecar.get("process_scopes"),
+        process_canaries=process_canaries,
+        guard_events=guard_events,
+        phase=phase,
+    )
+    authorized_processes = _authorized_profile_process_tree(scopes, guard_events)
+    run_process_pids = sidecar.get("run_process_pids")
+    startup_pids = sidecar.get("guard_startup_pids")
+    startup_pid_set = (
+        set(startup_pids) if isinstance(startup_pids, list) else set()
+    )
+    all_run_pids = {
+        event["pid"] for event in guard_events
+    } | {
+        event["child_pid"]
+        for event in guard_events
+        if event.get("event_type") == "subprocess_started"
+    } | {canary["pid"] for canary in process_canaries}
+    all_startup_pids = {
+        event["pid"]
+        for event in guard_events
+        if event.get("event_type") == "guard_startup"
+    }
+    if (
+        not _sorted_positive_pid_list(run_process_pids)
+        or not set(run_process_pids).issubset(all_run_pids)
+        or not set(scope["pid"] for scope in scopes).issubset(run_process_pids)
+        or not set(row_pids).issubset(run_process_pids)
+        or not _sorted_positive_pid_list(startup_pids)
+        or not set(startup_pids).issubset(all_startup_pids)
+        or not set(scope["pid"] for scope in scopes).issubset(startup_pids)
+        or not row_pids.issubset(startup_pids)
+        or authorized_processes is None
+        or not row_pids.issubset(authorized_processes)
+        or (
+            phase == "host_ready"
+            and not checkpoint_run
+            and startup_pid_set != all_startup_pids
+        )
+        or (
+            phase == "host_ready"
+            and checkpoint_run
+            and (
+                before_host_startup_pids is None
+                or not before_host_startup_pids.issubset(startup_pid_set)
+            )
+        )
+        or (
+            phase == "after_teardown"
+            and startup_pid_set != all_startup_pids
+        )
+    ):
+        raise ProfileValidationError("profile evidence socket sample guard ownership differs")
+    _validate_profile_protocol_samples(sidecar)
+    return rows, row_pids, scopes, startup_pid_set
+
+
+def _validate_profile_socket_scopes(
+    value: Any,
+    *,
+    process_canaries: list[Any],
+    guard_events: list[dict[str, Any]],
+    phase: str,
+) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        raise ProfileValidationError("profile evidence socket process scopes are incomplete")
+    canaries = {canary["canary_stage"]: canary for canary in process_canaries}
+    startup_by_pid = {
+        event["pid"]: event
+        for event in guard_events
+        if event.get("event_type") == "guard_startup"
+    }
+    expected_sources = [
+        ("controller-startup-canary", "controller-startup", "pid", "parent"),
+        (
+            "host-prelaunch-canary-session",
+            "host-prelaunch",
+            "process_group",
+            "host",
+        ),
+    ]
+    if phase != "before_host":
+        expected_sources.append(
+            ("host-worker-start-new-session", "host-startup", "process_group", "host")
+        )
+    if len(value) != len(expected_sources):
+        raise ProfileValidationError("profile evidence socket process scopes are incomplete")
+    scope_fields = {
+        "selector",
+        "pid",
+        "process_group_id",
+        "process_role",
+        "launch_source",
+        "command_sha256",
+        "environment_sha256",
+        "working_directory_sha256",
+    }
+    scopes_by_source: dict[str, dict[str, Any]] = {}
+    for scope in value:
+        _require_keys(scope, scope_fields, "socket process scope")
+        source = scope.get("launch_source")
+        if not isinstance(source, str):
+            raise ProfileValidationError("profile evidence socket process scope is malformed")
+        if source in scopes_by_source:
+            raise ProfileValidationError("profile evidence socket process scopes are duplicated")
+        scopes_by_source[source] = dict(scope)
+    normalized: list[dict[str, Any]] = []
+    for source, stage, selector, role in expected_sources:
+        scope = scopes_by_source.get(source)
+        canary = canaries[stage]
+        pid = canary["pid"]
+        startup = startup_by_pid.get(pid)
+        expected_group = (
+            startup.get("process_group_id") if role == "parent" and startup else pid
+        )
+        if (
+            scope is None
+            or type(scope.get("pid")) is not int
+            or type(scope.get("process_group_id")) is not int
+            or scope.get("selector") not in ("pid", "process_group")
+            or scope.get("process_role") not in ("parent", "host")
+            or scope.get("selector") != selector
+            or scope.get("pid") != pid
+            or scope.get("process_group_id") != expected_group
+            or scope.get("process_role") != role
+            or scope.get("command_sha256") != canary.get("command_sha256")
+            or scope.get("environment_sha256") != canary.get("environment_sha256")
+            or scope.get("working_directory_sha256")
+            != hashlib.sha256(canary["working_directory"].encode("utf-8")).hexdigest()
+            or any(
+                not isinstance(scope.get(field), str)
+                or re.fullmatch(r"[0-9a-f]{64}", scope[field]) is None
+                for field in (
+                    "command_sha256",
+                    "environment_sha256",
+                    "working_directory_sha256",
+                )
+            )
+        ):
+            raise ProfileValidationError("profile evidence socket process scope identity differs")
+        normalized.append(scope)
+    return normalized
+
+
+def _validate_profile_protocol_samples(sidecar: Mapping[str, Any]) -> None:
+    samples = sidecar.get("protocol_samples")
+    if not isinstance(samples, list) or len(samples) != 2:
+        raise ProfileValidationError("profile evidence socket protocol samples are incomplete")
+    expected_count_fields = {
+        "internet_rows",
+        "unattributed_rows",
+        "pid_zero_rows",
+        "foreign_process_rows",
+        "run_pid_rows",
+        "malformed_run_pid_rows",
+    }
+    aggregate = sidecar.get("aggregate_counts")
+    _require_keys(aggregate, expected_count_fields, "socket aggregate counts")
+    if any(type(aggregate.get(key)) is not int or aggregate[key] < 0 for key in expected_count_fields):
+        raise ProfileValidationError("profile evidence socket aggregate counts are malformed")
+    totals = {key: 0 for key in expected_count_fields}
+    empty_sha256 = hashlib.sha256(b"").hexdigest()
+    for sample, protocol in zip(samples, ("tcp", "udp")):
+        _require_keys(sample, {"protocol", "command_evidence", "counts", "parseable"}, "socket protocol sample")
+        command_evidence = sample.get("command_evidence")
+        command_fields = {
+            "command",
+            "returncode",
+            "failure",
+            "stdout_byte_count",
+            "stdout_sha256",
+            "stdout_truncated",
+            "stdout_prefix_base64",
+            "stderr_byte_count",
+            "stderr_sha256",
+            "stderr_truncated",
+            "stderr_prefix_base64",
+            "observed",
+        }
+        _require_keys(command_evidence, command_fields, "socket observer command evidence")
+        command = command_evidence.get("command")
+        if (
+            sample.get("protocol") != protocol
+            or sample.get("parseable") is not True
+            or not isinstance(command, list)
+            or len(command) != 5
+            or not isinstance(command[0], str)
+            or command[1:] != ["-anv", "-W", "-p", protocol]
+            or command_evidence.get("returncode") != 0
+            or type(command_evidence.get("returncode")) is not int
+            or command_evidence.get("failure") is not None
+            or command_evidence.get("observed") is not True
+            or type(command_evidence.get("stdout_byte_count")) is not int
+            or command_evidence.get("stdout_byte_count") < 0
+            or not _is_sha256(command_evidence.get("stdout_sha256"))
+            or command_evidence.get("stdout_truncated") is not False
+            or command_evidence.get("stdout_prefix_base64") != ""
+            or type(command_evidence.get("stderr_byte_count")) is not int
+            or command_evidence.get("stderr_byte_count") != 0
+            or command_evidence.get("stderr_sha256") != empty_sha256
+            or command_evidence.get("stderr_truncated") is not False
+            or command_evidence.get("stderr_prefix_base64") != ""
+        ):
+            raise ProfileValidationError("profile evidence socket observer command differs")
+        counts = sample.get("counts")
+        _require_keys(counts, expected_count_fields, "socket protocol counts")
+        if any(type(counts.get(key)) is not int or counts[key] < 0 for key in expected_count_fields):
+            raise ProfileValidationError("profile evidence socket protocol counts are malformed")
+        for key in expected_count_fields:
+            totals[key] += counts[key]
+    if (
+        totals != dict(aggregate)
+        or aggregate.get("malformed_run_pid_rows") != 0
+        or aggregate.get("run_pid_rows") != len(sidecar.get("run_owned_rows", []))
+    ):
+        raise ProfileValidationError("profile evidence socket aggregate counts differ")
+
+
+def _valid_profile_socket_row(value: Any) -> bool:
+    if not isinstance(value, Mapping) or set(value) != {
+        "protocol",
+        "local",
+        "foreign",
+        "state",
+        "pid",
+    }:
+        return False
+    protocol = value.get("protocol")
+    is_tcp = isinstance(protocol, str) and protocol in ("tcp", "tcp4", "tcp6")
+    is_udp = isinstance(protocol, str) and protocol in ("udp", "udp4", "udp6")
+    state = value.get("state")
+    return bool(
+        (is_tcp or is_udp)
+        and type(value.get("pid")) is int
+        and value.get("pid") > 0
+        and _valid_profile_socket_endpoint(value.get("local"))
+        and _valid_profile_socket_endpoint(value.get("foreign"))
+        and (
+            (is_udp and state is None)
+            or (
+                is_tcp
+                and isinstance(state, str)
+                and state.isascii()
+                and bool(state)
+                and state.replace("_", "").isalpha()
+            )
+        )
+    )
+
+
+def _valid_profile_socket_endpoint(value: Any) -> bool:
+    if not isinstance(value, Mapping) or set(value) != {"host", "port"}:
+        return False
+    host = value.get("host")
+    port = value.get("port")
+    if not isinstance(host, str):
+        return False
+    if host == "*":
+        valid_host = True
+    else:
+        try:
+            valid_host = str(ipaddress.ip_address(host)) == host
+        except ValueError:
+            valid_host = False
+    return bool(
+        valid_host
+        and (
+            (port is None and host == "*")
+            or (type(port) is int and 0 <= port <= 65535)
+        )
+    )
+
+
+def _socket_listener_pids(rows: list[Mapping[str, Any]], *, port: int) -> set[int]:
+    return {
+        row["pid"]
+        for row in rows
+        if _is_tcp_listener(row) and row["local"].get("port") == port
+    }
+
+
+def _profile_socket_has_unrecorded_foreign_endpoint(
+    row: Mapping[str, Any], guard_events: list[dict[str, Any]]
+) -> bool:
+    endpoint = row.get("foreign")
+    if not isinstance(endpoint, Mapping) or endpoint.get("host") == "*":
+        return False
+    host = endpoint.get("host")
+    port = endpoint.get("port")
+    try:
+        is_loopback = ipaddress.ip_address(host).is_loopback
+    except (TypeError, ValueError):
+        return True
+    if is_loopback:
+        return False
+    return not any(
+        event.get("event_type") == "network_attempt"
+        and event.get("pid") == row.get("pid")
+        and event.get("target_host") == host
+        and event.get("target_port") == port
+        for event in guard_events
+    )
+
+
+def _is_tcp_listener(row: Mapping[str, Any]) -> bool:
+    return bool(
+        row.get("protocol") in ("tcp", "tcp4", "tcp6")
+        and row.get("state") == "LISTEN"
+        and isinstance(row.get("local"), Mapping)
+    )
+
+
+def _authorized_host_process_pids(
+    guard_events: list[dict[str, Any]], host_worker_pid: int
+) -> set[int]:
+    authorized = _authorized_profile_process_tree(
+        [{"pid": host_worker_pid, "process_role": "host", "process_group_id": host_worker_pid}],
+        guard_events,
+    )
+    if authorized is None:
+        return set()
+    return {
+        pid
+        for pid, (role, _process_group_id) in authorized.items()
+        if role == "host"
+    }
+
+
+def _authorized_profile_process_tree(
+    scopes: list[dict[str, Any]], guard_events: list[dict[str, Any]]
+) -> dict[int, tuple[str, int]] | None:
+    startup_by_pid: dict[int, list[dict[str, Any]]] = {}
+    for event in guard_events:
+        if event.get("event_type") == "guard_startup":
+            startup_by_pid.setdefault(event["pid"], []).append(event)
+
+    authorized: dict[int, tuple[str, int]] = {}
+    for scope in scopes:
+        pid = scope.get("pid")
+        role = scope.get("process_role")
+        process_group_id = scope.get("process_group_id")
+        startups = startup_by_pid.get(pid, []) if type(pid) is int else []
+        if (
+            type(pid) is not int
+            or pid <= 0
+            or role not in ("parent", "host")
+            or type(process_group_id) is not int
+            or process_group_id <= 0
+            or len(startups) != 1
+            or startups[0].get("process_role") != role
+            or startups[0].get("process_group_id") != process_group_id
+        ):
+            return None
+        identity = (role, process_group_id)
+        if pid in authorized and authorized[pid] != identity:
+            return None
+        authorized[pid] = identity
+
+    if not authorized:
+        return None
+    changed = True
+    while changed:
+        changed = False
+        for event in guard_events:
+            if event.get("event_type") != "subprocess_started":
+                continue
+            parent_pid = event.get("pid")
+            parent_identity = authorized.get(parent_pid)
+            child_pid = event.get("child_pid")
+            if (
+                parent_identity is None
+                or type(child_pid) is not int
+                or child_pid <= 0
+                or event.get("process_role") != parent_identity[0]
+                or event.get("process_group_id") != parent_identity[1]
+            ):
+                continue
+            startups = startup_by_pid.get(child_pid, [])
+            if len(startups) != 1:
+                continue
+            startup = startups[0]
+            child_group = startup.get("process_group_id")
+            if (
+                startup.get("process_role") != parent_identity[0]
+                or type(child_group) is not int
+                or child_group not in (parent_identity[1], child_pid)
+            ):
+                continue
+            identity = (startup["process_role"], child_group)
+            previous = authorized.get(child_pid)
+            if previous is None:
+                authorized[child_pid] = identity
+                changed = True
+            elif previous != identity:
+                return None
+    return authorized
+
+
+def _is_exact_historic_profile_evidence(
+    evidence: Mapping[str, Any],
+    *,
+    evidence_path: str,
+    evidence_sha256: str,
+    profile_id: str,
+    fixture_id: str,
+    party_size: int,
+    lifecycle: str,
+    source_sha: str,
+) -> bool:
+    """Allow only exact, source-bound historic records lacking an identity receipt."""
+    signature = next(
+        (item for item in _HISTORIC_PROFILE_EVIDENCE if item[0] == evidence_path),
+        None,
+    )
+    if signature is None:
+        return False
+
+    (
+        expected_path,
+        expected_sha256,
+        expected_profile_id,
+        expected_fixture_id,
+        expected_party_size,
+        expected_lifecycle,
+        expected_source_sha,
+        expected_planned_row_id,
+        expected_arm,
+        expected_run_id,
+    ) = signature
+    return bool(
+        evidence_path == expected_path
+        and evidence_sha256 == expected_sha256
+        and profile_id == expected_profile_id
+        and fixture_id == expected_fixture_id
+        and type(party_size) is int
+        and party_size == expected_party_size
+        and lifecycle == expected_lifecycle
+        and source_sha == expected_source_sha
+        and evidence.get("authorization_ruling_id") == AUTHORIZATION_RULING_ID
+        and evidence.get("profile_id") == expected_profile_id
+        and evidence.get("fixture_id") == expected_fixture_id
+        and type(evidence.get("party_size")) is int
+        and evidence.get("party_size") == expected_party_size
+        and evidence.get("lifecycle") == expected_lifecycle
+        and evidence.get("planned_row_id") == expected_planned_row_id
+        and evidence.get("arm") == expected_arm
+        and evidence.get("run_id") == expected_run_id
+        and evidence.get("source_sha") == expected_source_sha
+    )
+
+
+def _validate_profile_invocation_identity(
+    identity: Any,
+    *,
+    evidence: Mapping[str, Any],
+    project_root: Path,
+    expected_command: list[str],
+    expected_pythonpath: str,
+) -> None:
+    """Bind the secret-safe match receipt to the observed worker evidence."""
+    identity_fields = {
+        "schema_version",
+        "status",
+        "fields_compared",
+        "mismatches",
+    }
+    _require_keys(identity, identity_fields, "profile invocation identity")
+    if (
+        type(identity.get("schema_version")) is not int
+        or identity.get("schema_version") != 1
+        or identity.get("status") != "matched"
+        or identity.get("fields_compared")
+        != ["command", "working_directory", "pythonpath"]
+        or identity.get("mismatches") != []
+    ):
+        raise ProfileValidationError(
+            "profile evidence invocation identity is not a secret-safe match"
+        )
+
+    expected_working_directory = str(
+        project_root.resolve(strict=True) / _PROFILE_WORKING_DIRECTORY
+    )
+    host_command = evidence.get("host_command")
+    if (
+        not _valid_command(expected_command)
+        or evidence.get("command") != expected_command
+        or host_command != expected_command
+        or evidence.get("working_directory") != _PROFILE_WORKING_DIRECTORY
+        or evidence.get("pythonpath") != expected_pythonpath
+        or expected_pythonpath != expected_guarded_pythonpath(project_root)
+    ):
+        raise ProfileValidationError(
+            "profile evidence invocation identity differs from declared worker identity"
+        )
+
+    canaries = evidence.get("process_canaries")
+    host_canaries = (
+        [
+            canary
+            for canary in canaries
+            if isinstance(canary, Mapping)
+            and canary.get("process_role") == "host"
+        ]
+        if isinstance(canaries, list)
+        else []
+    )
+    if len(host_canaries) != 2 or any(
+        canary.get("command") != expected_command
+        or canary.get("working_directory") != expected_working_directory
+        for canary in host_canaries
+    ):
+        raise ProfileValidationError(
+            "profile evidence invocation identity differs from worker canaries"
+        )
+
+    calls = evidence.get("calls")
+    if not isinstance(calls, list) or not calls or any(
+        not isinstance(call, Mapping)
+        or call.get("command") != expected_command
+        or call.get("pythonpath") != expected_pythonpath
+        for call in calls
+    ):
+        raise ProfileValidationError(
+            "profile evidence invocation identity differs from routed worker calls"
+        )
+
+
+def _sorted_positive_pid_list(value: Any) -> bool:
+    return bool(
+        isinstance(value, list)
+        and all(type(pid) is int and pid > 0 for pid in value)
+        and value == sorted(set(value))
+    )
+
+
+def _is_sha256(value: Any) -> bool:
+    return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
+
+
+def _valid_command(value: Any) -> bool:
+    return bool(
+        isinstance(value, list)
+        and value
+        and all(
+            isinstance(part, str)
+            and part
+            and not _SECRET_TEXT.search(part)
+            and not any(ord(character) < 32 or ord(character) == 127 for character in part)
+            for part in value
+        )
+    )
+
+
+def _valid_controller_command(value: Any) -> bool:
+    if _valid_command(value):
+        return True
+    if not (
+        isinstance(value, list)
+        and len(value) == 4
+        and all(isinstance(part, str) and part for part in value)
+        and value[1] == "-P"
+        and value[2] == "-c"
+        and "\n" in value[3]
+        and "\r" not in value[3]
+        and all(ord(character) >= 32 and ord(character) != 127 for character in value[3] if character != "\n")
+        and not any(_SECRET_TEXT.search(part) for part in value)
+    ):
+        return False
+    normalized = list(value)
+    normalized[3] = normalized[3].replace("\n", " ")
+    return _valid_command(normalized)
+
+
+def _valid_interpreter_identity(value: Any, project_root: Path) -> bool:
+    if not isinstance(value, Mapping) or set(value) != {
+        "executable",
+        "prefix",
+        "base_prefix",
+    }:
+        return False
+    expected_python = str(project_root / ".venv" / "bin" / "python")
+    expected_prefix = str(project_root / ".venv")
+    base_prefix = value.get("base_prefix")
+    return (
+        value.get("executable") == expected_python
+        and value.get("prefix") == expected_prefix
+        and isinstance(base_prefix, str)
+        and bool(base_prefix)
+        and base_prefix != expected_prefix
+    )
+
+
+def _read_bounded_evidence(path: Path, *, allow_empty: bool = False) -> bytes:
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(path, os.O_RDONLY | nofollow)
+        metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_size < (0 if allow_empty else 1)
+            or metadata.st_size > _PROFILE_EVIDENCE_MAX_BYTES
+        ):
+            raise ProfileValidationError("profile evidence is not a bounded regular file")
+        chunks: list[bytes] = []
+        remaining = _PROFILE_EVIDENCE_MAX_BYTES + 1
+        while remaining:
+            chunk = os.read(descriptor, min(64_000, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        raw = b"".join(chunks)
+        if len(raw) > _PROFILE_EVIDENCE_MAX_BYTES or (not allow_empty and not raw):
+            raise ProfileValidationError("profile evidence exceeds the size limit")
+        return raw
+    except OSError as exc:
+        raise ProfileValidationError("profile evidence cannot be read") from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON key")
+        result[key] = value
+    return result
+
+
+def _reject_json_constant(value: str) -> Any:
+    raise ValueError("non-standard JSON value: %s" % value)
+
+
+def _safe_source_path(root: Path, relative: str | Path, label: str) -> Path:
+    raw = PurePosixPath(str(relative))
+    if (
+        raw.is_absolute()
+        or ".." in raw.parts
+        or "\\" in str(relative)
+        or not raw.parts
+    ):
+        raise ProfileValidationError("%s path is unsafe" % label)
+    candidate = root.joinpath(*raw.parts)
+    if root.is_symlink():
+        raise ProfileValidationError("%s path traverses a symlink" % label)
+    cursor = root
+    for part in raw.parts:
+        cursor = cursor / part
+        if cursor.is_symlink():
+            raise ProfileValidationError("%s path traverses a symlink" % label)
+    try:
+        resolved = candidate.resolve(strict=True)
+        resolved.relative_to(root.resolve(strict=True))
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise ProfileValidationError("%s path is missing or escapes project" % label) from exc
+    if not resolved.is_file():
+        raise ProfileValidationError("%s path is not a file" % label)
+    return resolved
+
+
+def _require_keys(value: Any, expected: set[str], label: str) -> None:
+    if not isinstance(value, Mapping) or set(value) != expected:
+        raise ProfileValidationError("%s fields are malformed" % label)
+
+
+def copy_profile_document() -> dict[str, Any]:
+    """Return a detached copy of the checked-in declaration for focused tests."""
+    path = _safe_source_path(PROJECT_ROOT, PROFILE_PATH.relative_to(PROJECT_ROOT), "profile declaration")
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ProfileValidationError("profile declaration cannot be read") from exc
+    if not isinstance(value, dict):
+        raise ProfileValidationError("profile declaration must be an object")
+    return copy.deepcopy(value)

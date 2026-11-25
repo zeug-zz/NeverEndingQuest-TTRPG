@@ -39,6 +39,20 @@ socket path) rather than adding new test infrastructure. The tiered roadmap for
 generalizing this rig (scenario packs, session trace, assertions, client
 metrics, matrix runs) lives in `plans/capture-arena.md`.
 
+### Provider-free live-gate preflight
+
+Before booking a live gate, require a clean provider-free preflight report at
+the exact source SHA intended for the run, with matching `requirements-lock.txt`
+identity and secret-free routing identity. It must use the same command,
+working directory, and `PYTHONPATH`, issue zero upstream provider requests,
+record zero infrastructure failures, and report all required checks passing.
+Keep preflight evidence only under
+`tmp/router-rollout/<gate>/<run-id>/preflight/`. Hold the shared live-window
+lock while using port 8360, and verify teardown leaves no listener on ports
+8360 or 8370. Missing or unsupported lifecycle profiles block booking eligibility.
+`READY_FOR_BOOKING` is preflight-only: it is neither a booking nor a live-gate
+PASS; only the owner may make a later booking ruling.
+
 ## Trigger Phrases
 
 - `run capture arena`
