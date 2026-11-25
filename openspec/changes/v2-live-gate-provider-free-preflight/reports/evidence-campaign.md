@@ -185,3 +185,19 @@ MISSING. No old file was modified or reclassified as a live gate.
   eligibility, or live-gate PASS is established. The earlier
   `fr11-samesha-12` failure and own-lock recovery are historical campaign
   events, not a pass or a waiver.
+
+## Task 2.1 evidence (2026-11-26)
+
+Primary independently verified `fr11-samesha-16` at SHA
+`41ecef67bb2ed92a2c4a330cfb1d066a4a7865a5`: all 26 planned rows completed
+(10 P1, 16 P4), including nine required interior resumes. PF1-PF9 PASS; there
+were zero reserve activations, infrastructure failures, or upstream requests.
+The 53 evidence/journal/teardown/manifests and 383 bundled inputs were
+hash-checked (206+53+53+53+9+9), then all 53 were independently revalidated
+after sandbox cleanup while external source, Git, and bookings-log reads were
+blocked. Ports and lock were absent. Verification reported integration 51
+passed; focused suites 36/152/63/27 passed; ASCII and strict OpenSpec passed.
+
+This is preflight-only evidence, not a booking ruling or live-gate PASS. The
+documentation commit changes the SHA; a fresh exact-head preflight and CI are
+required.
