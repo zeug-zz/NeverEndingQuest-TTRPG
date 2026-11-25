@@ -161,3 +161,27 @@ MISSING. No old file was modified or reclassified as a live gate.
 - Open design questions for the Overseer: (a) required lifecycle set per row so a 26-row same-SHA report can reach PASS (recommendation: resume required only for interior rows per `interior.json:121`; landscape/tower resume extra; combat N/A) - needs row-bound resume checkpoints to be supplied; (b) whether the control's E01 profile mismatch satisfies task 4.1, or a diagnostic continue-after-failure mode for comparison runs is wanted to observe NameError on E06 and E13-E18.
 - Defects found and fixed by first real end-to-end runs (all hermetic tests had missed them): stale `id_map_file` literal; startup canary probes counted as provider requests; guard-event journal bound once per process vs per row; git identity under the subprocess guard; startup-guard relaunch; retained evidence file mode (umask); failure codes without reason; comparison identity not forwarded to the supervisor; worker host command missing the comparison identity; retained reconciliation reason not visible.
 - Not claimed: no booking, no live-gate PASS, no booking eligibility; reserve rows R01-R04 never activated.
+
+## Reconciliation update (2026-11-25)
+
+- Same-SHA run `fr11-samesha-13` at `455a08ec` reported all 26 planned rows
+  complete, PF1-PF9 PASS, zero infrastructure failures, and zero provider
+  requests. This result is **NOT VERIFIED** and is not accepted for booking:
+  independent post-run validation found that all 53 retained guard-journal
+  full-file hashes differ from their recorded hashes. The recorded prefixes
+  match, but later events are present in the full files. No journal was
+  truncated or otherwise modified.
+- Correction `7edb51b3` and merge `38a37f88` aim to prevent subsequent journal
+  mutation. That intent does not verify this run or establish that the current
+  head passes; no current-head same-SHA verification is claimed.
+- Comparison control `fr11-cmp-pre105-06` stopped at E01 because the
+  `core/ai/action_handler.py` and `main.py` content hashes differed from the
+  declared profile. The accepted non-bookable profile mismatch satisfies task
+  4.1 under ruling `neq-w1-fr11-required-lifecycles-20261123`. E06 and E13-E18
+  were not run; the `NameError` was **NOT OBSERVED**, as the ruling explicitly
+  says it is not required for task 4.1.
+- Task 2.1 remains unchecked pending corrected same-SHA verification with
+  independently reconciled retained journals. No new gate PASS, booking
+  eligibility, or live-gate PASS is established. The earlier
+  `fr11-samesha-12` failure and own-lock recovery are historical campaign
+  events, not a pass or a waiver.
