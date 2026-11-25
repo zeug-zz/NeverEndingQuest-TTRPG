@@ -2562,6 +2562,58 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
             missing_socket_snapshot.reason, "public_response_contract_invalid"
         )
 
+    def test_l03_public_shell_failure_records_bounded_status_and_error(self) -> None:
+        service = FakePublicService()
+        service.overrides[("GET", "/")] = FakePublicService._json(
+            403,
+            {
+                "error": "request_rejected",
+                "detail": "sharing-player.example",
+                "location": "https://sharing-player.example/",
+            },
+        )
+        ready = {
+            "state": "ready",
+            "reason": "ready",
+            "generation": 1,
+            "companion_launches": 1,
+        }
+        api = LifecycleFakeApi(
+            status={"state": "off", "reason": "off"},
+            post_handlers={
+                "issue-access": lambda _payload: gate.HostApiResponse(
+                    200, {"ok": True, "credential": service.credential}
+                ),
+                "start": lambda _payload: gate.HostApiResponse(
+                    200, {"ok": True, "reason": "ready", "status": ready}
+                ),
+                "copy-invitation": lambda _payload: gate.HostApiResponse(
+                    200,
+                    {
+                        "ok": True,
+                        "invitation": service.accepted_origin,
+                        "status": ready,
+                    },
+                ),
+            },
+        )
+        context = self.make_row_context(api=api, public_service=service)
+        self.prepare_l03_startup(context, api)
+
+        result = gate.L03PublicAccessExecutor().execute(context)
+
+        self.assertEqual(result.verdict, "FAIL")
+        self.assertEqual(result.reason, "public_player_shell_unavailable")
+        self.assertEqual(
+            result.observed,
+            {
+                "public_shell_status": 403,
+                "public_shell_error": "request_rejected",
+            },
+        )
+        self.assertNotIn(service.accepted_origin, repr(result.observed))
+        self.assertNotIn("sharing-player.example", repr(result.observed))
+
     def test_l03_startup_prechecks_fail_before_socket_connection(self) -> None:
         context = self.make_row_context()
         api = context.host_api
