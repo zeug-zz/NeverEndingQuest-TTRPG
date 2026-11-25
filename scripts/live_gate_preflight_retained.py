@@ -14,6 +14,7 @@ import re
 import signal
 import stat
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -543,6 +544,76 @@ class RetainedEvidenceError(ValueError):
         self.retained_artifacts: list[dict[str, Any]] = []
 
 
+@dataclass(frozen=True)
+class RetainedValidationSnapshot:
+    """Immutable Git-derived inputs captured before the row journal is bound."""
+
+    source_sha: str
+    summary_source_bytes: bytes
+    git_common_directory: Path
+
+
+def capture_retained_validation_snapshot(source_sha: str) -> RetainedValidationSnapshot:
+    """Capture Git-backed validation inputs before row supervision hashes its journal."""
+    from scripts import live_gate_preflight_profile_runner as runner
+    from scripts import live_gate_preflight_safety as safety
+
+    if safety._GUARD_EVENT_SINK is not None:
+        raise RetainedEvidenceError(
+            "retained validation snapshot must precede guard-event journal binding"
+        )
+    try:
+        summary_source_bytes = runner._git_source_bytes_at_sha(
+            source_sha, "core/ai/adv_summary.py"
+        )
+        git_common_directory = runner._git_common_directory()
+    except runner.CharacterizationError as exc:
+        raise RetainedEvidenceError(
+            "retained validation snapshot is unavailable"
+        ) from exc
+    return RetainedValidationSnapshot(
+        source_sha=source_sha,
+        summary_source_bytes=summary_source_bytes,
+        git_common_directory=git_common_directory,
+    )
+
+
+def _validate_retained_validation_snapshot(
+    snapshot: Any, *, source_sha: str
+) -> RetainedValidationSnapshot:
+    if (
+        not isinstance(snapshot, RetainedValidationSnapshot)
+        or not isinstance(source_sha, str)
+        or re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", source_sha) is None
+        or snapshot.source_sha != source_sha
+        or not isinstance(snapshot.summary_source_bytes, bytes)
+        or not snapshot.summary_source_bytes
+        or len(snapshot.summary_source_bytes) > _MAX_PROFILE_ARTIFACT_BYTES
+        or not isinstance(snapshot.git_common_directory, Path)
+    ):
+        raise RetainedEvidenceError("retained validation snapshot identity differs")
+    try:
+        project_root = PROJECT_ROOT.resolve(strict=True)
+        common_directory = snapshot.git_common_directory.resolve(strict=True)
+        relative = common_directory.relative_to(project_root)
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise RetainedEvidenceError(
+            "retained validation snapshot common directory is unsafe"
+        ) from exc
+    if not relative.parts or common_directory != snapshot.git_common_directory:
+        raise RetainedEvidenceError(
+            "retained validation snapshot common directory is unsafe"
+        )
+    cursor = project_root
+    for part in relative.parts:
+        cursor = cursor / part
+        if cursor.is_symlink():
+            raise RetainedEvidenceError(
+                "retained validation snapshot common directory is unsafe"
+            )
+    return snapshot
+
+
 def validate_retained_supervised_evidence(
     result: Mapping[str, Any],
     *,
@@ -554,6 +625,7 @@ def validate_retained_supervised_evidence(
     row_run_id: str,
     preflight_run_id: str,
     comparison_identity: Mapping[str, Any] | None = None,
+    validation_snapshot: RetainedValidationSnapshot | None = None,
 ) -> dict[str, Any]:
     """Validate retained sidecars and return a summary derived from disk."""
     from scripts import live_gate_preflight_profile_runner as runner
@@ -561,6 +633,10 @@ def validate_retained_supervised_evidence(
 
     if not _valid_run_identity(row_run_id) or not _valid_run_identity(preflight_run_id):
         raise RetainedEvidenceError("row evidence run identity is invalid")
+    if validation_snapshot is not None:
+        validation_snapshot = _validate_retained_validation_snapshot(
+            validation_snapshot, source_sha=source_sha
+        )
     evidence_directory = (
         Path("tmp/router-rollout/live-gate-preflight")
         / preflight_run_id
@@ -600,6 +676,18 @@ def validate_retained_supervised_evidence(
         dict(returned_evidence), evidence
     ):
         raise RetainedEvidenceError("returned profile summary differs from retained evidence")
+    journal_descriptor = evidence.get("guard_event_journal")
+    expected_journal_path = (evidence_directory / "guard-events.jsonl").as_posix()
+    if (
+        not isinstance(journal_descriptor, Mapping)
+        or journal_descriptor.get("path") != expected_journal_path
+        or not isinstance(journal_descriptor.get("sha256"), str)
+        or _SHA256.fullmatch(journal_descriptor["sha256"]) is None
+    ):
+        raise RetainedEvidenceError("retained guard-event journal identity is invalid")
+    journal_raw_before = _read_bytes(expected_journal_path, "guard-event journal")
+    if hashlib.sha256(journal_raw_before).hexdigest() != journal_descriptor["sha256"]:
+        raise RetainedEvidenceError("retained guard-event journal hash differs")
 
     profile_id = next(
         (
@@ -636,6 +724,14 @@ def validate_retained_supervised_evidence(
             call_count=evidence.get("call_count"),
             call_sites=evidence.get("call_sites"),
             evidence_directory=PROJECT_ROOT / evidence_directory,
+            trusted_summary_source=(
+                (
+                    validation_snapshot.source_sha,
+                    validation_snapshot.summary_source_bytes,
+                )
+                if validation_snapshot is not None
+                else None
+            ),
         )
     except profiles.ProfileValidationError as exc:
         raise RetainedEvidenceError(
@@ -674,7 +770,17 @@ def validate_retained_supervised_evidence(
         worker_stop_proof=worker_stop_proof,
         runner=runner,
         comparison_identity=comparison_identity,
+        git_common_directory=(
+            validation_snapshot.git_common_directory
+            if validation_snapshot is not None
+            else None
+        ),
     )
+    journal_raw_after = _read_bytes(expected_journal_path, "guard-event journal")
+    if journal_raw_after != journal_raw_before:
+        raise RetainedEvidenceError(
+            "retained guard-event journal changed during reconciliation"
+        )
 
     return {
         "outcome": "completed",
@@ -891,6 +997,7 @@ def _read_and_validate_teardown(
     worker_stop_proof: Mapping[str, Any],
     runner: Any,
     comparison_identity: Mapping[str, Any] | None,
+    git_common_directory: Path | None,
 ) -> dict[str, str]:
     descriptor = evidence.get("teardown_evidence")
     expected_path = (evidence_directory / "teardown-evidence.json").as_posix()
@@ -1141,7 +1248,10 @@ def _read_and_validate_teardown(
     ):
         raise RetainedEvidenceError("retained shared lock release record identity differs")
     actual_record, durable_digest = _read_durable_release_record(
-        durable_reference, release_record=release_record, runner=runner
+        durable_reference,
+        release_record=release_record,
+        runner=runner,
+        git_common_directory=git_common_directory,
     )
     if not _strict_json_equal(actual_record, dict(release_record)):
         raise RetainedEvidenceError("durable shared lock release record differs from sidecar")
@@ -1179,11 +1289,27 @@ def _read_durable_release_record(
     *,
     release_record: Mapping[str, Any],
     runner: Any,
+    git_common_directory: Path | None = None,
 ) -> tuple[dict[str, Any], str]:
     fields = {"path", "byte_offset", "byte_length", "line_sha256"}
     if not isinstance(reference, Mapping) or set(reference) != fields:
         raise RetainedEvidenceError("durable shared lock release reference is invalid")
-    expected_path = runner._git_common_directory() / "neq-coordination" / "bookings.log"
+    if git_common_directory is None:
+        common_directory = runner._git_common_directory()
+    else:
+        try:
+            root = PROJECT_ROOT.resolve(strict=True)
+            common_directory = git_common_directory.resolve(strict=True)
+            relative_common = common_directory.relative_to(root)
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise RetainedEvidenceError(
+                "durable shared lock release path is outside the project"
+            ) from exc
+        if not relative_common.parts or common_directory != git_common_directory:
+            raise RetainedEvidenceError(
+                "durable shared lock release path is unsafe"
+            )
+    expected_path = common_directory / "neq-coordination" / "bookings.log"
     try:
         expected_relative = expected_path.relative_to(PROJECT_ROOT).as_posix()
     except ValueError as exc:

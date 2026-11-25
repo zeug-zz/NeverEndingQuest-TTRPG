@@ -1033,6 +1033,7 @@ def _validate_profile_evidence(
     call_count: int,
     call_sites: list[Any],
     evidence_directory: Path | None = None,
+    trusted_summary_source: tuple[str, bytes] | None = None,
 ) -> None:
     """Verify a measured declaration against its retained, bounded call log."""
     path = _safe_source_path(project_root, evidence_path, "profile evidence")
@@ -1636,6 +1637,7 @@ def _validate_profile_evidence(
             guard_events=guard_events,
             evidence_directory=path.parent,
             retained_artifacts=evidence.get("summary_child_artifacts"),
+            trusted_summary_source=trusted_summary_source,
         )
     summary_child_value = evidence.get("adv_summary_child")
     launch_count = (
@@ -1709,6 +1711,7 @@ def _validate_adv_summary_child_evidence(
     guard_events: list[dict[str, Any]],
     evidence_directory: Path | None,
     retained_artifacts: Any = None,
+    trusted_summary_source: tuple[str, bytes] | None = None,
 ) -> None:
     child_fields = {
         "schema_version",
@@ -1792,14 +1795,27 @@ def _validate_adv_summary_child_evidence(
     )
     from scripts import live_gate_preflight_profile_runner as profile_runner
 
-    try:
-        source_at_sha = profile_runner._git_source_bytes_at_sha(
-            source_sha, "core/ai/adv_summary.py"
-        )
-    except profile_runner.CharacterizationError as exc:
+    if trusted_summary_source is None:
+        try:
+            source_at_sha = profile_runner._git_source_bytes_at_sha(
+                source_sha, "core/ai/adv_summary.py"
+            )
+        except profile_runner.CharacterizationError as exc:
+            raise ProfileValidationError(
+                "trusted summary child source identity is unavailable"
+            ) from exc
+    elif (
+        not isinstance(trusted_summary_source, tuple)
+        or len(trusted_summary_source) != 2
+        or trusted_summary_source[0] != source_sha
+        or not isinstance(trusted_summary_source[1], bytes)
+        or not trusted_summary_source[1]
+    ):
         raise ProfileValidationError(
-            "trusted summary child source identity is unavailable"
-        ) from exc
+            "trusted summary child source snapshot identity differs"
+        )
+    else:
+        source_at_sha = trusted_summary_source[1]
     retained_script_source = retained.get("script_source")
     if not isinstance(retained_script_source, bytes):
         raise ProfileValidationError("retained summary child source is missing")

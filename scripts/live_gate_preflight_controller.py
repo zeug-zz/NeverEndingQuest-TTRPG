@@ -148,6 +148,7 @@ class PreflightInterfaces:
     ]
     cleanup_sandbox: Callable[[PreflightRowPlan, Mapping[str, Any]], bool]
     safety_counters: Callable[[], Mapping[str, Any]]
+    capture_retained_validation_snapshot: Callable[[str], Any] | None = None
 
 
 def supervised_preflight_interfaces(
@@ -158,6 +159,7 @@ def supervised_preflight_interfaces(
 ) -> PreflightInterfaces:
     """Bind row orchestration to the guarded sandbox and profile-runner APIs."""
     from scripts import live_gate_preflight_profile_runner as profile_runner
+    from scripts import live_gate_preflight_retained as retained
     from scripts import live_gate_preflight_sandbox as sandbox
 
     if not isinstance(run_id, str) or _RUN_ID.fullmatch(run_id) is None:
@@ -273,6 +275,9 @@ def supervised_preflight_interfaces(
         supervise_row=supervise,
         cleanup_sandbox=cleanup,
         safety_counters=safety_counters,
+        capture_retained_validation_snapshot=(
+            retained.capture_retained_validation_snapshot
+        ),
     )
 
 
@@ -1364,6 +1369,7 @@ def _validate_supervised_result(
     preflight_run_id: str,
     comparison_identity: Mapping[str, Any] | None = None,
     create_resume_checkpoint: bool = False,
+    validation_snapshot: Any = None,
 ) -> dict[str, Any]:
     if not isinstance(result, Mapping):
         raise PreflightControllerError("guarded row evidence is unavailable")
@@ -1383,6 +1389,7 @@ def _validate_supervised_result(
             row_run_id=row_run_id,
             preflight_run_id=preflight_run_id,
             comparison_identity=comparison_identity,
+            validation_snapshot=validation_snapshot,
         )
         validated["retained_evidence_path"] = result["evidence_path"]
         validated["retained_evidence_sha256"] = result["evidence_sha256"]
@@ -1501,6 +1508,17 @@ def _run_lifecycle_invocation(
             validated,
             fixture_id=invocation.fixture_id,
         )
+        validation_snapshot = None
+        capture_validation_snapshot = (
+            interfaces.capture_retained_validation_snapshot
+        )
+        if capture_validation_snapshot is not None:
+            try:
+                validation_snapshot = capture_validation_snapshot(source_sha)
+            except Exception as exc:
+                raise PreflightControllerError(
+                    "retained_validation_snapshot_unavailable"
+                ) from exc
         supervised = interfaces.supervise_row(
             plan,
             seeded,
@@ -1519,6 +1537,7 @@ def _run_lifecycle_invocation(
             preflight_run_id=preflight_run_id,
             comparison_identity=comparison_identity,
             create_resume_checkpoint=invocation.create_resume_checkpoint,
+            validation_snapshot=validation_snapshot,
         )
     finally:
         if isinstance(seeded, Mapping):

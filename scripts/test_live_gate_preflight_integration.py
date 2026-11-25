@@ -1272,6 +1272,7 @@ class TestPreflightRowIntegration(unittest.TestCase):
         intended_identity: dict[str, Any],
         result: dict[str, Any],
         comparison_identity: dict[str, Any] | None = None,
+        validation_snapshot: retained.RetainedValidationSnapshot | None = None,
     ) -> dict[str, Any]:
         return retained.validate_retained_supervised_evidence(
             result,
@@ -1287,7 +1288,74 @@ class TestPreflightRowIntegration(unittest.TestCase):
             row_run_id=row_run_id,
             preflight_run_id=RUN_ID,
             comparison_identity=comparison_identity,
+            validation_snapshot=validation_snapshot,
         )
+
+    def _synthetic_validation_snapshot(
+        self, source_sha: str = SOURCE_SHA
+    ) -> retained.RetainedValidationSnapshot:
+        if self.fake_common_directory is None:
+            raise AssertionError("synthetic durable lock directory was not prepared")
+        return retained.RetainedValidationSnapshot(
+            source_sha=source_sha,
+            summary_source_bytes=b"synthetic committed summary source",
+            git_common_directory=self.fake_common_directory,
+        )
+
+    def test_validation_snapshot_captures_git_inputs_before_journal_binding(self) -> None:
+        common_directory = self.retained_run_directory / "synthetic-git-common"
+        common_directory.mkdir(parents=True)
+        operations: list[str] = []
+        summary_source = b"trusted summary source at the declared SHA"
+
+        def read_summary_source(source_sha: str, relative_path: str) -> bytes:
+            self.assertEqual(source_sha, SOURCE_SHA)
+            self.assertEqual(relative_path, "core/ai/adv_summary.py")
+            operations.append("summary_source")
+            return summary_source
+
+        def read_common_directory() -> Path:
+            operations.append("git_common_directory")
+            return common_directory
+
+        with (
+            mock.patch.object(safety, "_GUARD_EVENT_SINK", None),
+            mock.patch.object(
+                profile_runner,
+                "_git_source_bytes_at_sha",
+                side_effect=read_summary_source,
+            ) as source_lookup,
+            mock.patch.object(
+                profile_runner,
+                "_git_common_directory",
+                side_effect=read_common_directory,
+            ) as common_lookup,
+        ):
+            snapshot = retained.capture_retained_validation_snapshot(SOURCE_SHA)
+
+        self.assertEqual(snapshot.source_sha, SOURCE_SHA)
+        self.assertEqual(snapshot.summary_source_bytes, summary_source)
+        self.assertEqual(snapshot.git_common_directory, common_directory)
+        self.assertEqual(operations, ["summary_source", "git_common_directory"])
+        source_lookup.assert_called_once_with(
+            SOURCE_SHA, "core/ai/adv_summary.py"
+        )
+        common_lookup.assert_called_once_with()
+
+        with (
+            mock.patch.object(
+                safety, "_GUARD_EVENT_SINK", common_directory / "bound.jsonl"
+            ),
+            mock.patch.object(profile_runner, "_git_source_bytes_at_sha") as source_lookup,
+            mock.patch.object(profile_runner, "_git_common_directory") as common_lookup,
+        ):
+            with self.assertRaisesRegex(
+                retained.RetainedEvidenceError,
+                "must precede guard-event journal binding",
+            ):
+                retained.capture_retained_validation_snapshot(SOURCE_SHA)
+        source_lookup.assert_not_called()
+        common_lookup.assert_not_called()
 
     def _run_prelaunch_characterization_failure(
         self,
@@ -1968,6 +2036,260 @@ class TestPreflightRowIntegration(unittest.TestCase):
             result["evidence"]["process_census"]["python_child_pids"], [104]
         )
 
+    def test_sequential_lifecycles_capture_fresh_snapshot_before_supervision(self) -> None:
+        rows, _reserves = _load_frozen_row_ids(None)
+        profiles, _coverage = _load_profiles([str(row["row_id"]) for row in rows])
+        plans = [
+            _resolve_row_plan(
+                row_id,
+                prereg_root=None,
+                expected_row=next(row for row in rows if row["row_id"] == row_id),
+                profiles=profiles,
+            )
+            for row_id in ("E01", "E02")
+        ]
+        order: list[tuple[str, str]] = []
+        snapshots = [object(), object()]
+        snapshot_index = 0
+        validation_index = 0
+        active_row_id: str | None = None
+
+        def prepare(*_args: Any) -> dict[str, Any]:
+            nonlocal active_row_id
+            active_row_id = _args[0].row_id
+            order.append(("prepare", active_row_id))
+            return {"sandbox_root": "tmp/combat_capture"}
+
+        def capture(source_sha: str) -> object:
+            nonlocal snapshot_index
+            self.assertEqual(source_sha, SOURCE_SHA)
+            if active_row_id is None:
+                raise AssertionError("snapshot captured outside a lifecycle")
+            order.append(("capture", active_row_id))
+            snapshot = snapshots[snapshot_index]
+            snapshot_index += 1
+            return snapshot
+
+        def supervise(*_args: Any) -> dict[str, Any]:
+            order.append(("supervise", _args[0].row_id))
+            return {}
+
+        def validate_seed(*_args: Any, **_kwargs: Any) -> None:
+            order.append(("validate_seed", _args[0].row_id))
+
+        def validate_launcher_sandbox(*_args: Any, **_kwargs: Any) -> None:
+            if active_row_id is None:
+                raise AssertionError("sandbox validation occurred outside a lifecycle")
+            order.append(("launcher_validate", active_row_id))
+
+        def validate_sandbox(*_args: Any, **_kwargs: Any) -> None:
+            order.append(("validate_sandbox", _args[0].row_id))
+
+        def validate_result(_result: Mapping[str, Any], **kwargs: Any) -> dict[str, Any]:
+            nonlocal validation_index
+            if active_row_id is None:
+                raise AssertionError("validation occurred outside a lifecycle")
+            order.append(("validate", active_row_id))
+            self.assertIs(
+                kwargs["validation_snapshot"], snapshots[validation_index]
+            )
+            validation_index += 1
+            return {"outcome": "completed"}
+
+        def cleanup(plan: controller.PreflightRowPlan, *_args: Any) -> bool:
+            order.append(("cleanup", plan.row_id))
+            return True
+
+        interfaces = PreflightInterfaces(
+            prepare_sandbox=prepare,
+            supervise_row=supervise,
+            cleanup_sandbox=cleanup,
+            safety_counters=lambda: {},
+            capture_retained_validation_snapshot=capture,
+        )
+        with (
+            mock.patch.object(
+                controller, "_validate_seed_result", side_effect=validate_seed
+            ),
+            mock.patch.object(
+                launcher,
+                "validate_sandbox",
+                side_effect=validate_launcher_sandbox,
+            ),
+            mock.patch.object(
+                controller, "_validate_sandbox_result", side_effect=validate_sandbox
+            ),
+            mock.patch.object(
+                controller, "_validate_supervised_result", side_effect=validate_result
+            ),
+        ):
+            for plan in plans:
+                row_run_id = self._lifecycle_row_run_id(
+                    plan, plan.fixture_id, "startup"
+                )
+                identity = planned_worker_identity(
+                    plan,
+                    fixture_id=plan.fixture_id,
+                    lifecycle="startup",
+                    source_sha=SOURCE_SHA,
+                    row_run_id=row_run_id,
+                    preflight_run_id=RUN_ID,
+                )
+                invocation = controller.PreflightLifecycleInvocation(
+                    fixture_id=plan.fixture_id,
+                    lifecycle="startup",
+                    row_run_id=row_run_id,
+                    intended_identity=identity,
+                )
+                result = controller._run_lifecycle_invocation(
+                    plan,
+                    invocation,
+                    source_sha=SOURCE_SHA,
+                    preflight_run_id=RUN_ID,
+                    interfaces=interfaces,
+                )
+                self.assertEqual(result, {"outcome": "completed"})
+
+        self.assertEqual(snapshot_index, len(snapshots))
+        self.assertEqual(validation_index, len(snapshots))
+        self.assertIsNot(snapshots[0], snapshots[1])
+        self.assertEqual(
+            order,
+            [
+                (operation, plan.row_id)
+                for plan in plans
+                for operation in (
+                    "prepare",
+                    "validate_seed",
+                    "launcher_validate",
+                    "validate_sandbox",
+                    "capture",
+                    "supervise",
+                    "validate",
+                    "cleanup",
+                )
+            ],
+        )
+
+    def test_retained_validation_snapshot_preserves_complete_journal(self) -> None:
+        plan, row_run_id, identity, result = self._retained_case()
+        snapshot = self._synthetic_validation_snapshot()
+        journal_path = PROJECT_ROOT / result["evidence"]["guard_event_journal"]["path"]
+        journal_before = journal_path.read_bytes()
+
+        with (
+            mock.patch.object(
+                profile_runner,
+                "_git_source_bytes_at_sha",
+                side_effect=AssertionError("late Git source lookup"),
+            ),
+            mock.patch.object(
+                profile_runner,
+                "_git_common_directory",
+                side_effect=AssertionError("late Git common-directory lookup"),
+            ),
+        ):
+            summary = self._validate_retained_case(
+                plan,
+                row_run_id,
+                identity,
+                result,
+                validation_snapshot=snapshot,
+            )
+
+        journal_after = journal_path.read_bytes()
+        events = [json.loads(line) for line in journal_after.splitlines()]
+        self.assertEqual(summary["outcome"], "completed")
+        self.assertEqual(journal_after, journal_before)
+        self.assertEqual(
+            len(events), result["evidence"]["guard_event_journal"]["event_count"]
+        )
+        self.assertTrue(
+            all(event.get("run_id") == row_run_id for event in events)
+        )
+
+    def test_late_parent_subprocess_events_are_preserved_and_rejected(self) -> None:
+        plan, row_run_id, identity, result = self._retained_case()
+        journal_descriptor = result["evidence"]["guard_event_journal"]
+        journal_path = PROJECT_ROOT / journal_descriptor["path"]
+        original_journal = journal_path.read_bytes()
+        source_bytes = b"synthetic committed summary source"
+
+        def append_late_subprocess_events() -> Path:
+            events = [json.loads(line) for line in journal_path.read_bytes().splitlines()]
+            parent_attempt = next(
+                event
+                for event in events
+                if event.get("pid") == 101
+                and event.get("process_role") == "parent"
+                and event.get("event_type") == "subprocess_attempt"
+            )
+            sequence = max(
+                event["sequence"] for event in events if event.get("pid") == 101
+            )
+            observed_at_ns = max(
+                event["observed_at_ns"]
+                for event in events
+                if event.get("pid") == 101
+            )
+            command_sha256 = "f" * 64
+            late_attempt = dict(parent_attempt)
+            late_attempt.update(
+                {
+                    "sequence": sequence + 1,
+                    "observed_at_ns": observed_at_ns + 1,
+                    "decision": "allowed",
+                    "command_sha256": command_sha256,
+                }
+            )
+            late_started = dict(late_attempt)
+            late_started.update(
+                {
+                    "sequence": sequence + 2,
+                    "observed_at_ns": observed_at_ns + 2,
+                    "event_type": "subprocess_started",
+                    "decision": "started",
+                    "child_pid": 105,
+                    "child_is_python": False,
+                }
+            )
+            appended = b"".join(
+                json.dumps(
+                    event,
+                    ensure_ascii=True,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("ascii")
+                + b"\n"
+                for event in (late_attempt, late_started)
+            )
+            with journal_path.open("ab") as journal_file:
+                journal_file.write(appended)
+            return self._fake_git_common_directory()
+
+        with (
+            mock.patch.object(
+                profile_runner,
+                "_git_source_bytes_at_sha",
+                return_value=source_bytes,
+            ),
+            mock.patch.object(
+                profile_runner,
+                "_git_common_directory",
+                side_effect=append_late_subprocess_events,
+            ) as git_common_directory,
+        ):
+            with self.assertRaisesRegex(
+                retained.RetainedEvidenceError,
+                "guard-event journal changed during reconciliation",
+            ):
+                self._validate_retained_case(plan, row_run_id, identity, result)
+
+        self.assertEqual(git_common_directory.call_count, 1)
+        changed_journal = journal_path.read_bytes()
+        self.assertTrue(changed_journal.startswith(original_journal))
+        self.assertEqual(len(changed_journal.splitlines()), len(original_journal.splitlines()) + 2)
+
     def test_retained_worker_checkpoint_travel_is_required_and_exact(self) -> None:
         cases = (
             ("ordinary-worker-extra", False, "extra"),
@@ -2099,13 +2421,27 @@ class TestPreflightRowIntegration(unittest.TestCase):
         guard_path = PROJECT_ROOT / result["evidence"]["guard_event_journal"]["path"]
         guard_path.write_bytes(b"not-json\n")
         with self.assertRaisesRegex(retained.RetainedEvidenceError, "hash differs"):
-            self._validate_retained_case(plan, row_run_id, identity, result)
+            self._validate_retained_case(
+                plan,
+                row_run_id,
+                identity,
+                result,
+                validation_snapshot=self._synthetic_validation_snapshot(),
+            )
 
         plan, row_run_id, identity, result = self._retained_case()
         guard_path = PROJECT_ROOT / result["evidence"]["guard_event_journal"]["path"]
         guard_path.unlink()
-        with self.assertRaisesRegex(retained.RetainedEvidenceError, "journal path is missing"):
-            self._validate_retained_case(plan, row_run_id, identity, result)
+        with self.assertRaisesRegex(
+            retained.RetainedEvidenceError, "guard-event journal file is unavailable"
+        ):
+            self._validate_retained_case(
+                plan,
+                row_run_id,
+                identity,
+                result,
+                validation_snapshot=self._synthetic_validation_snapshot(),
+            )
 
         plan, row_run_id, identity, result = self._retained_case()
         evidence = result["evidence"]
@@ -2118,7 +2454,13 @@ class TestPreflightRowIntegration(unittest.TestCase):
         evidence["guard_event_journal"]["event_count"] = 1
         self._rewrite_profile_evidence(result, evidence)
         with self.assertRaisesRegex(retained.RetainedEvidenceError, "journal is invalid"):
-            self._validate_retained_case(plan, row_run_id, identity, result)
+            self._validate_retained_case(
+                plan,
+                row_run_id,
+                identity,
+                result,
+                validation_snapshot=self._synthetic_validation_snapshot(),
+            )
 
         plan, row_run_id, identity, result = self._retained_case()
         worker_path = (

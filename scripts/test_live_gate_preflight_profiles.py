@@ -3441,6 +3441,43 @@ class TestPreflightStubAndSafety(unittest.TestCase):
                 **wrong_source_args,
             )
 
+        from scripts import live_gate_preflight_profile_runner as profile_runner
+
+        trusted_source_snapshot = (
+            source_sha,
+            profile_runner._git_source_bytes_at_sha(
+                source_sha, "core/ai/adv_summary.py"
+            ),
+        )
+        with mock.patch.object(
+            profile_runner,
+            "_git_source_bytes_at_sha",
+            side_effect=AssertionError("late Git source lookup"),
+        ):
+            preflight_profiles._validate_adv_summary_child_evidence(
+                PROJECT_ROOT,
+                profile_child_evidence,
+                **{
+                    **profile_validator_args,
+                    "trusted_summary_source": trusted_source_snapshot,
+                },
+            )
+            with self.assertRaisesRegex(
+                ProfileValidationError,
+                "trusted summary child source snapshot identity differs",
+            ):
+                preflight_profiles._validate_adv_summary_child_evidence(
+                    PROJECT_ROOT,
+                    profile_child_evidence,
+                    **{
+                        **profile_validator_args,
+                        "trusted_summary_source": (
+                            "b" * 40,
+                            trusted_source_snapshot[1],
+                        ),
+                    },
+                )
+
         final_artifact = next(
             item
             for item in retained_artifacts["artifacts"]
