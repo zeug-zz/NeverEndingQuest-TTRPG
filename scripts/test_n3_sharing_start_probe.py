@@ -311,6 +311,8 @@ class ProbeTests(unittest.TestCase):
                 "socket_transport": "websocket",
                 "socket_connected": True,
                 "snapshot_valid": True,
+                "snapshot_status": 200,
+                "snapshot_error_code": None,
                 "failure_reason": None,
                 "exception_class": None,
             },
@@ -378,6 +380,80 @@ class ProbeTests(unittest.TestCase):
         self.assertIn("stop", context.services[0].calls)
         self.assertIs(True, verdict["census"]["clean"])
 
+    def test_authenticated_snapshot_status_and_error_are_allowlisted(self) -> None:
+        secret = "snapshot-private-sentinel-991"
+        cases = (
+            (
+                "snapshot-unavailable",
+                gate.PublicHttpResponse(
+                    503,
+                    (("X-Diagnostic-Secret", secret),),
+                    json.dumps(
+                        {"error": "snapshot_unavailable", "detail": secret}
+                    ).encode("ascii"),
+                ),
+                503,
+                "snapshot_unavailable",
+            ),
+            (
+                "rate-limited",
+                gate.PublicHttpResponse(
+                    429,
+                    (("Content-Type", "application/json"),),
+                    b'{"error":"rate_limited"}',
+                ),
+                429,
+                "rate_limited",
+            ),
+            (
+                "malicious-reason",
+                gate.PublicHttpResponse(
+                    503,
+                    (("X-Diagnostic-Secret", secret),),
+                    json.dumps({"error": secret, "token": secret}).encode("ascii"),
+                ),
+                503,
+                "unclassified",
+            ),
+            (
+                "malformed-body",
+                gate.PublicHttpResponse(
+                    503,
+                    (("Content-Type", "application/json"),),
+                    ('{"error":"snapshot_unavailable","detail":"%s"' % secret).encode(
+                        "ascii"
+                    ),
+                ),
+                503,
+                "unclassified",
+            ),
+        )
+        for probe_id, response, expected_status, expected_error in cases:
+            with self.subTest(probe_id=probe_id):
+                context = self.build(probe_id="n3p-snapshot-" + probe_id)
+                context.public_requester.responses[4] = response
+                verdict, code = probe.run_probe(context.arguments, context.deps)
+
+                self.assertEqual(("FAIL", 1), (verdict["verdict"], code))
+                self.assertEqual("public_socket_auth_failed", verdict["reason"])
+                auth = verdict["public_socket_auth"]
+                self.assertEqual(expected_status, auth["snapshot_status"])
+                self.assertEqual(expected_error, auth["snapshot_error_code"])
+                self.assertEqual(
+                    "public_authenticated_snapshot_rejected", auth["failure_reason"]
+                )
+                auth_step = next(
+                    item
+                    for item in verdict["steps"]
+                    if item["name"] == "public_socket_auth"
+                )
+                self.assertEqual(expected_status, auth_step["snapshot_status"])
+                self.assertEqual(expected_error, auth_step["snapshot_error_code"])
+                emitted = json.dumps(verdict, ensure_ascii=True)
+                evidence = self.evidence_text(context).decode("ascii")
+                self.assertNotIn(secret, emitted)
+                self.assertNotIn(secret, evidence)
+
     def test_public_login_rejection_fails_and_stops(self) -> None:
         context = self.build()
         context.public_requester.responses[3] = gate.PublicHttpResponse(
@@ -395,6 +471,8 @@ class ProbeTests(unittest.TestCase):
                 "socket_transport": "websocket",
                 "socket_connected": False,
                 "snapshot_valid": False,
+                "snapshot_status": None,
+                "snapshot_error_code": None,
                 "failure_reason": "public_login_rejected",
                 "exception_class": None,
             },
