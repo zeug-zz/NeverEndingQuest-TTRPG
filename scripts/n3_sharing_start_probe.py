@@ -91,6 +91,33 @@ _PUBLIC_ASSET_PATTERN = re.compile(
 _PUBLIC_ERROR_CODE_PATTERN = re.compile(r"[a-z_]{1,64}\Z")
 PUBLIC_GET_TIMEOUT_SECONDS = min(gate.PUBLIC_CLIENT_TIMEOUT_SECONDS, 15.0)
 
+_PUBLIC_FAILURE_REASONS = frozenset(
+    {
+        "public_access_value_unavailable",
+        "public_authenticated_snapshot_invalid",
+        "public_authenticated_snapshot_rejected",
+        "public_client_timeout_invalid",
+        "public_host_override_refused",
+        "public_login_challenge_rejected",
+        "public_login_input_invalid",
+        "public_login_rejected",
+        "public_login_response_invalid",
+        "public_login_unavailable",
+        "public_request_invalid",
+        "public_response_invalid",
+        "public_response_too_large",
+        "public_session_cookie_invalid",
+        "public_session_unavailable",
+        "public_shell_invalid",
+        "public_socket_input_invalid",
+        "public_socket_snapshot_invalid",
+        "public_socket_snapshot_timeout",
+        "public_socket_unavailable",
+        "public_transport_unavailable",
+        "public_url_invalid",
+    }
+)
+
 
 class ProbeRefused(RuntimeError):
     """A precondition failed; nothing was started."""
@@ -126,6 +153,8 @@ class ProbeDependencies:
         [str, int, str, str, Mapping[str, str], bytes | None, float],
         gate.PublicHttpResponse,
     ] | None = None
+    public_socket_factory: Callable[[], object] | None = None
+    websocket_availability_check: Callable[[], bool] | None = None
     getloadavg: Callable[[], tuple[float, float, float]] = os.getloadavg
     utc_now: Callable[[], datetime] = lambda: datetime.now(timezone.utc)
     monotonic: Callable[[], float] = time.monotonic
@@ -846,9 +875,33 @@ def _write_evidence(
         return False
 
 
+def _bounded_public_failure_reason(value: object, fallback: str) -> str:
+    if type(value) is str and value in _PUBLIC_FAILURE_REASONS:
+        return value
+    return fallback
+
+
 def run_probe(
     arguments: ProbeArguments, deps: ProbeDependencies
 ) -> tuple[dict[str, object], int]:
+    try:
+        websocket_available = (
+            deps.websocket_availability_check()
+            if deps.websocket_availability_check is not None
+            else gate.websocket_client_transport_available()
+        )
+    except Exception:
+        websocket_available = False
+    if websocket_available is not True:
+        refusal = {
+            "diagnosis_only": True,
+            "probe_id": arguments.probe_id,
+            "verdict": "REFUSED",
+            "reason": "websocket_client_unavailable",
+            "dependency": "websocket-client",
+        }
+        return refusal, EXIT_CODES["REFUSED"]
+
     try:
         prepared = _check_preconditions(arguments, deps)
     except ProbeRefused as exc:
@@ -868,6 +921,15 @@ def run_probe(
         "shell_references_asset": False,
         "origin_header_sent": False,
     }
+    public_socket_auth: dict[str, object] = {
+        "login_status": None,
+        "cookie_flags_valid": False,
+        "socket_transport": "websocket",
+        "socket_connected": False,
+        "snapshot_valid": False,
+        "failure_reason": None,
+        "exception_class": None,
+    }
     verdict: dict[str, object] = {
         "schema": 1,
         "diagnosis_only": True,
@@ -881,6 +943,8 @@ def run_probe(
     }
     failure: str | None = None
     service: object | None = None
+    client: gate.PublicUrlClient | None = None
+    access_value: str | None = None
     owned = SimpleNamespace(
         state_root=prepared.state_root,
         _state_root_identity=None,
@@ -946,7 +1010,10 @@ def run_probe(
                     step("issue_access", begun, "failed")
                     raise _ProbeStepFailed("credential_issuance_failed")
                 try:
-                    secrets.append(issued.credential.reveal())
+                    revealed_value = issued.credential.reveal()
+                    if isinstance(revealed_value, str) and revealed_value:
+                        access_value = revealed_value
+                        secrets.append(revealed_value)
                 except Exception:
                     pass
                 step("issue_access", begun, "ok")
@@ -1028,6 +1095,7 @@ def run_probe(
 
                 client = gate.PublicUrlClient(
                     requester=deps.public_requester,
+                    socket_factory=deps.public_socket_factory,
                     timeout_seconds=PUBLIC_GET_TIMEOUT_SECONDS,
                 )
                 try:
@@ -1155,11 +1223,158 @@ def run_probe(
                     step("public_asset_get", begun, "failed", **asset_observation)
                     raise _ProbeStepFailed("public_asset_get_failed")
                 step("public_asset_get", begun, "ok", **asset_observation)
+
+                login_begun = deps.monotonic()
+                login_failure_reason: str | None = None
+                login_exception_class: str | None = None
+                login_response: gate.PublicHttpResponse | None = None
+                session: gate.PublicPlayerSession | None = None
+                cookie_flags_valid = False
+                if access_value is None:
+                    login_failure_reason = "public_access_value_unavailable"
+                else:
+                    try:
+                        offline_public_transport = (
+                            deps.public_requester is not None
+                            and deps.public_socket_factory is not None
+                        )
+                        network_scope = (
+                            guard.allow_public_https(origin.hostname, origin.port)
+                            if isinstance(guard, _InProcessEgressGuard)
+                            and not offline_public_transport
+                            else nullcontext()
+                        )
+                        with network_scope:
+                            _challenge_response, challenge = client.login_challenge()
+                            if challenge is None:
+                                login_failure_reason = (
+                                    "public_login_challenge_rejected"
+                                )
+                            else:
+                                login_response, session = client.login(
+                                    challenge, access_value
+                                )
+                                public_socket_auth["login_status"] = (
+                                    login_response.status
+                                )
+                                cookie_flags_valid = gate._session_cookie_is_secure(
+                                    login_response, "neq_player_session"
+                                )
+                                public_socket_auth[
+                                    "cookie_flags_valid"
+                                ] = cookie_flags_valid
+                                if login_response.status != 200 or session is None:
+                                    login_failure_reason = "public_login_rejected"
+                                elif not cookie_flags_valid:
+                                    login_failure_reason = (
+                                        "public_session_cookie_invalid"
+                                    )
+                    except Exception as exc:
+                        login_exception_class = gate._diagnostic_exception_class(exc)
+                        login_failure_reason = _bounded_public_failure_reason(
+                            getattr(exc, "reason", None), "public_login_unavailable"
+                        )
+                if login_failure_reason is not None or session is None:
+                    if login_failure_reason is None:
+                        login_failure_reason = "public_login_rejected"
+                    public_socket_auth["failure_reason"] = login_failure_reason
+                    public_socket_auth["exception_class"] = login_exception_class
+                    step(
+                        "public_login",
+                        login_begun,
+                        "failed",
+                        status=(
+                            login_response.status
+                            if login_response is not None
+                            else None
+                        ),
+                        cookie_flags_valid=cookie_flags_valid,
+                    )
+                    step(
+                        "public_socket_auth",
+                        deps.monotonic(),
+                        "skipped",
+                        socket_transport="websocket",
+                    )
+                    raise _ProbeStepFailed("public_login_failed")
+                step(
+                    "public_login",
+                    login_begun,
+                    "ok",
+                    status=login_response.status if login_response is not None else None,
+                    cookie_flags_valid=cookie_flags_valid,
+                )
+
+                socket_begun = deps.monotonic()
+                socket_failure_reason: str | None = None
+                socket_exception_class: str | None = None
+                try:
+                    offline_public_transport = (
+                        deps.public_requester is not None
+                        and deps.public_socket_factory is not None
+                    )
+                    network_scope = (
+                        guard.allow_public_https(origin.hostname, origin.port)
+                        if isinstance(guard, _InProcessEgressGuard)
+                        and not offline_public_transport
+                        else nullcontext()
+                    )
+                    with network_scope:
+                        authenticated = client.authenticated_snapshot(session)
+                        snapshot = gate._decode_player_snapshot(authenticated)
+                        if snapshot is None:
+                            socket_failure_reason = (
+                                "public_authenticated_snapshot_rejected"
+                                if authenticated.status != 200
+                                else "public_authenticated_snapshot_invalid"
+                            )
+                        else:
+                            connected = client.connect_player_socket(session, snapshot)
+                            public_socket_auth["socket_connected"] = bool(
+                                connected and client.socket_connected is True
+                            )
+                            public_socket_auth["snapshot_valid"] = bool(
+                                public_socket_auth["socket_connected"]
+                            )
+                            if public_socket_auth["socket_connected"] is not True:
+                                socket_failure_reason = "public_socket_unavailable"
+                except Exception as exc:
+                    socket_failure_reason = _bounded_public_failure_reason(
+                        getattr(exc, "reason", None), "public_socket_unavailable"
+                    )
+                    socket_exception_class = gate._diagnostic_exception_class(exc)
+                if socket_failure_reason is not None:
+                    public_socket_auth["failure_reason"] = socket_failure_reason
+                    public_socket_auth["exception_class"] = socket_exception_class
+                    step(
+                        "public_socket_auth",
+                        socket_begun,
+                        "failed",
+                        socket_transport="websocket",
+                        socket_connected=False,
+                        snapshot_valid=False,
+                        failure_reason=socket_failure_reason,
+                        exception_class=socket_exception_class,
+                    )
+                    raise _ProbeStepFailed("public_socket_auth_failed")
+                step(
+                    "public_socket_auth",
+                    socket_begun,
+                    "ok",
+                    socket_transport="websocket",
+                    socket_connected=public_socket_auth["socket_connected"],
+                    snapshot_valid=public_socket_auth["snapshot_valid"],
+                )
             except _ProbeStepFailed as exc:
                 failure = exc.reason
             except Exception as exc:
                 failure = "probe_exception_" + type(exc).__name__
             finally:
+                if client is not None:
+                    try:
+                        client.disconnect()
+                    except Exception:
+                        pass
                 if service is not None:
                     if failure is not None:
                         diagnostics_observation = _capture_start_failure(
@@ -1230,6 +1445,17 @@ def run_probe(
         and public_get_without_origin["shell_references_asset"] is not True
     ):
         failure = "public_shell_asset_missing"
+    if failure is None and (
+        public_socket_auth["login_status"] != 200
+        or public_socket_auth["cookie_flags_valid"] is not True
+    ):
+        failure = "public_login_failed"
+    if failure is None and (
+        public_socket_auth["socket_transport"] != "websocket"
+        or public_socket_auth["socket_connected"] is not True
+        or public_socket_auth["snapshot_valid"] is not True
+    ):
+        failure = "public_socket_auth_failed"
 
     if census["clean"] is not True:
         outcome = "BLOCKED_DIRTY"
@@ -1247,6 +1473,7 @@ def run_probe(
             "reason": reason_code,
             "reached_sharing_ready": ready_reached,
             "public_get_without_origin": public_get_without_origin,
+            "public_socket_auth": public_socket_auth,
             "final_sharing_state": final_state,
             "final_sharing_reason": final_reason,
             "companion_counters": counters,
@@ -1458,21 +1685,77 @@ class _FakePublicRequester:
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, int, str, str, dict[str, str], bytes | None, float]] = []
-        self.responses: list[gate.PublicHttpResponse | Exception] = [
-            gate.PublicHttpResponse(
-                200,
-                (("Content-Type", "text/html; charset=utf-8"),),
+        from web.extensions.player.contracts import make_snapshot_envelope
+
+        self.snapshot = make_snapshot_envelope(
+            "probe-instance-000000000000000000",
+            "probe-session-epoch-000000000000000",
+            0,
+            0,
+            {
+                "party": {
+                    "members": [],
+                    "active_character": None,
+                    "active_character_revision": 0,
+                    "world": {},
+                },
+                "busy": False,
+            },
+        )
+        shell = gate.PublicHttpResponse(
+            200,
+            (
+                ("Content-Type", "text/html; charset=utf-8"),
                 (
-                    b'<!doctype html><html><body><form><input name="csrf_token" '
-                    b'value="planted-value-0042-planted-value-0042"></form>'
-                    b'<script src="/static/player/planted-asset-01.js"></script>'
-                    b"</body></html>"
+                    "Set-Cookie",
+                    "neq_player_prelogin=planted-prelogin-value-0042; "
+                    "Path=/; Secure; HttpOnly; SameSite=Strict",
                 ),
             ),
+            (
+                b'<!doctype html><html><head>'
+                b'<meta name="neq-client-build" content="0123456789abcdef'
+                b'0123456789abcdef">'
+                b'<meta name="neq-protocol-version" content="1">'
+                b"</head><body><form><input name=\"csrf_token\" "
+                b'value="planted-form-value-0042-planted-form-value"></form>'
+                b'<script src="/static/player/planted-asset-01.js"></script>'
+                b"</body></html>"
+            ),
+        )
+        self.responses: list[gate.PublicHttpResponse | Exception] = [
+            shell,
             gate.PublicHttpResponse(
                 200,
                 (("Content-Type", "application/javascript"),),
                 b"window.probe = true;",
+            ),
+            shell,
+            gate.PublicHttpResponse(
+                200,
+                (
+                    ("Content-Type", "application/json"),
+                    (
+                        "Set-Cookie",
+                        "neq_player_session=planted-session-value-0042; "
+                        "Path=/; Secure; HttpOnly; SameSite=Strict",
+                    ),
+                ),
+                json.dumps(
+                    {
+                        "csrf_token": "planted-response-value-0042-planted",
+                        "expires_at": 2_000_000_000,
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("ascii"),
+            ),
+            gate.PublicHttpResponse(
+                200,
+                (("Content-Type", "application/json"),),
+                json.dumps(
+                    self.snapshot, sort_keys=True, separators=(",", ":")
+                ).encode("ascii"),
             ),
         ]
 
@@ -1497,6 +1780,49 @@ class _FakePublicRequester:
         return response
 
 
+class _FakePublicSocket:
+    """In-memory Socket.IO websocket; records transport arguments only."""
+
+    def __init__(self, snapshot: object) -> None:
+        self.snapshot = snapshot
+        self.connected = False
+        self.disconnected = False
+        self.connect_call: dict[str, object] | None = None
+        self.connect_exception: Exception | None = None
+        self.handlers: dict[tuple[str, str], object] = {}
+
+    def on(self, event: str, handler: object, *, namespace: str) -> None:
+        self.handlers[(namespace, event)] = handler
+
+    def connect(self, url: str, **kwargs: object) -> None:
+        self.connect_call = {"url": url, **kwargs}
+        if self.connect_exception is not None:
+            raise self.connect_exception
+        self.connected = True
+
+    def emit(self, event: str, _payload: object, *, namespace: str) -> None:
+        handler = self.handlers.get((namespace, "player.snapshot"))
+        if event == "player.snapshot.request" and callable(handler):
+            handler(self.snapshot)
+
+    def disconnect(self) -> None:
+        self.connected = False
+        self.disconnected = True
+
+
+class _FakePublicSocketFactory:
+    def __init__(self, snapshot: object) -> None:
+        self.snapshot = snapshot
+        self.connect_exception: Exception | None = None
+        self.clients: list[_FakePublicSocket] = []
+
+    def __call__(self) -> _FakePublicSocket:
+        client = _FakePublicSocket(self.snapshot)
+        client.connect_exception = self.connect_exception
+        self.clients.append(client)
+        return client
+
+
 @dataclass(slots=True)
 class FakeContext:
     deps: ProbeDependencies
@@ -1509,6 +1835,7 @@ class FakeContext:
     patches: list
     services: list
     public_requester: _FakePublicRequester
+    public_socket_factory: _FakePublicSocketFactory
 
     def close(self) -> None:
         import shutil
@@ -1579,6 +1906,7 @@ def build_fake_dependencies(
     processes = _FakeProcesses()
     selected_runner = runner or _FakeCompanionRunner()
     public_requester = _FakePublicRequester()
+    public_socket_factory = _FakePublicSocketFactory(public_requester.snapshot)
     services: list = []
 
     def make_service(config: ProbeConfig) -> FakeSharingService:
@@ -1610,6 +1938,8 @@ def build_fake_dependencies(
         identity_observer_factory=lambda _layout, _path: _FakeObserver(observer_state),
         state_base_provider=lambda: state_base,
         public_requester=public_requester,
+        public_socket_factory=public_socket_factory,
+        websocket_availability_check=lambda: True,
         getloadavg=lambda: (1.0, 2.0, 3.0),
         utc_now=lambda: datetime.now(timezone.utc),
         sleep=lambda _seconds: None,
@@ -1628,6 +1958,7 @@ def build_fake_dependencies(
         patches=patches,
         services=services,
         public_requester=public_requester,
+        public_socket_factory=public_socket_factory,
     )
 
 
@@ -1652,6 +1983,7 @@ def selftest() -> int:
             ("FAIL", 1),
         ),
         ("public_shell_failure", {}, ("FAIL", 1)),
+        ("public_socket_failure", {}, ("FAIL", 1)),
     ):
         scratch = scratch_parent / ("selftest-%s-%d" % (name, os.getpid()))
         if scratch.exists():
@@ -1671,6 +2003,10 @@ def selftest() -> int:
                         b'{"error":"request_rejected"}',
                     )
                 ]
+            elif name == "public_socket_failure":
+                context.public_socket_factory.connect_exception = RuntimeError(
+                    "selftest-planted-runtime-detail"
+                )
             verdict, code = run_probe(context.arguments, context.deps)
             ok = (verdict.get("verdict"), code) == expected and verdict.get(
                 "diagnosis_only"
@@ -1688,8 +2024,23 @@ def selftest() -> int:
                     == 200
                     and "public_shell_get" in step_names
                     and "public_asset_get" in step_names
+                    and "public_login" in step_names
+                    and "public_socket_auth" in step_names
+                    and verdict.get("public_socket_auth", {}).get(
+                        "socket_transport"
+                    )
+                    == "websocket"
+                    and verdict.get("public_socket_auth", {}).get(
+                        "socket_connected"
+                    )
+                    is True
+                    and verdict.get("public_socket_auth", {}).get("snapshot_valid")
+                    is True
                 )
-                detail = " public_shell_get=200 public_asset_get=200"
+                detail = (
+                    " public_shell_get=200 public_asset_get=200"
+                    " public_login=200 public_socket_auth=websocket"
+                )
             elif name == "public_shell_failure":
                 ok = ok and (
                     verdict.get("reason") == "public_shell_get_failed"
@@ -1701,6 +2052,17 @@ def selftest() -> int:
                     and "stop_sharing" in step_names
                 )
                 detail = " public_shell_get=403"
+            elif name == "public_socket_failure":
+                auth = verdict.get("public_socket_auth", {})
+                ok = ok and (
+                    verdict.get("reason") == "public_socket_auth_failed"
+                    and auth.get("failure_reason") == "public_socket_unavailable"
+                    and auth.get("exception_class") == "RuntimeError"
+                    and "selftest-planted-runtime-detail"
+                    not in json.dumps(verdict, ensure_ascii=True)
+                    and "stop_sharing" in step_names
+                )
+                detail = " public_socket_auth=failed"
             else:
                 detail = ""
             results.append((name + detail, ok))

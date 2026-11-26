@@ -27,9 +27,16 @@ import scripts.n3_sharing_start_probe as probe
 SCRATCH_ROOT = probe.REPO_ROOT / "tmp" / "n3-sharing-start-probe-tests"
 FROZEN_DIGEST = "b754bb6fe3fdd206fb96d68ea972c741fc524f0477db71a523792459772b8ee4"
 PLANTED_VALUE = "planted-value-0042-planted-value-0042"
+PLANTED_FORM_VALUE = "planted-form-value-0042-planted-form-value"
+PLANTED_PRELOGIN_VALUE = "planted-prelogin-value-0042"
+PLANTED_SESSION_VALUE = "planted-session-value-0042"
+PLANTED_RESPONSE_VALUE = "planted-response-value-0042-planted"
+PLANTED_RAW_EXCEPTION = "planted-raw-exception-detail-0042"
 PLANTED_HOSTNAME = "planted-evidence-host.opentunnel.xyz"
 PLANTED_TUNNEL_ID = "planted-tunnel-9876"
 PLANTED_URL = "https://planted-evidence-host.opentunnel.xyz"
+PLANTED_PUBLIC_AUTHORITY = "probe-relay.example.invalid"
+PLANTED_PUBLIC_ORIGIN = "https://" + PLANTED_PUBLIC_AUTHORITY
 PLANTED_ASSET_ID = "planted-asset-01.js"
 
 
@@ -132,6 +139,24 @@ class ProbeTests(unittest.TestCase):
                 context.deps.getloadavg = lambda value=load: value
                 self.assert_refused(context, "load_gate_failed")
 
+    def test_websocket_client_unavailable_is_refused_before_live_work(self) -> None:
+        context = self.build()
+        context.deps.websocket_availability_check = None
+        with mock.patch.object(
+            gate, "websocket_client_transport_available", return_value=False
+        ) as available:
+            verdict, code = probe.run_probe(context.arguments, context.deps)
+        available.assert_called_once_with()
+        self.assertEqual(("REFUSED", "websocket_client_unavailable"), (
+            verdict["verdict"],
+            verdict["reason"],
+        ))
+        self.assertEqual("websocket-client", verdict["dependency"])
+        self.assertEqual(probe.EXIT_CODES["REFUSED"], code)
+        self.assertEqual([], context.services)
+        self.assertEqual([], context.runner.calls)
+        self.assertFalse(self.evidence_dir(context).exists())
+
     def test_long_state_root_is_refused(self) -> None:
         context = self.build()
         long_base = context.state_base / ("l" * 80)
@@ -143,9 +168,21 @@ class ProbeTests(unittest.TestCase):
 
     def test_happy_path_reaches_ready_with_clean_census(self) -> None:
         context = self.build(service_kwargs={"issued_value": PLANTED_VALUE})
-        verdict, code = probe.run_probe(context.arguments, context.deps)
+        stop_observation: dict[str, bool] = {}
+        original_stop = probe.FakeSharingService.stop
+
+        def observe_stop(service: probe.FakeSharingService) -> object:
+            clients = context.public_socket_factory.clients
+            stop_observation["socket_disconnected_before_stop"] = bool(
+                clients and clients[-1].disconnected
+            )
+            return original_stop(service)
+
+        with mock.patch.object(probe.FakeSharingService, "stop", observe_stop):
+            verdict, code = probe.run_probe(context.arguments, context.deps)
         self.assertEqual(0, code)
         self.assertEqual("PASS", verdict["verdict"])
+        self.assertEqual({"socket_disconnected_before_stop": True}, stop_observation)
         self.assertIs(True, verdict["diagnosis_only"])
         self.assertIs(True, verdict["reached_sharing_ready"])
         self.assertEqual("ready", verdict["final_sharing_state"])
@@ -165,6 +202,8 @@ class ProbeTests(unittest.TestCase):
                 "copy_invitation",
                 "public_shell_get",
                 "public_asset_get",
+                "public_login",
+                "public_socket_auth",
                 "stop_sharing",
                 "identity_teardown",
             ],
@@ -212,21 +251,82 @@ class ProbeTests(unittest.TestCase):
         self.assertEqual("javascript", asset_step["content_type_class"])
         self.assertGreater(asset_step["body_bytes"], 0)
         self.assertEqual(len(PLANTED_ASSET_ID), asset_step["asset_id_length"])
-        self.assertEqual(2, len(context.public_requester.calls))
-        for index, request in enumerate(context.public_requester.calls):
+        self.assertEqual(5, len(context.public_requester.calls))
+        expected_requests = (
+            ("GET", "/", {"Host": "probe-relay.example.invalid"}, None),
+            (
+                "GET",
+                "/static/player/" + PLANTED_ASSET_ID,
+                {"Host": "probe-relay.example.invalid"},
+                None,
+            ),
+            ("GET", "/", {"Host": "probe-relay.example.invalid"}, None),
+            (
+                "POST",
+                "/api/player/login",
+                {
+                    "Host": "probe-relay.example.invalid",
+                    "Content-Type": "application/json",
+                    "Origin": PLANTED_PUBLIC_ORIGIN,
+                    "Cookie": "neq_player_prelogin=" + PLANTED_PRELOGIN_VALUE,
+                },
+                b"",
+            ),
+            (
+                "GET",
+                "/api/player/snapshot",
+                {
+                    "Host": "probe-relay.example.invalid",
+                    "Origin": PLANTED_PUBLIC_ORIGIN,
+                    "Cookie": "neq_player_session=" + PLANTED_SESSION_VALUE,
+                    "X-NEQ-Client-Build": "0123456789abcdef0123456789abcdef",
+                    "X-NEQ-Protocol-Version": str(gate.PROTOCOL_VERSION),
+                },
+                None,
+            ),
+        )
+        for index, (request, expected) in enumerate(
+            zip(context.public_requester.calls, expected_requests)
+        ):
             hostname, port, method, path, headers, body, timeout = request
             self.assertEqual("probe-relay.example.invalid", hostname)
             self.assertEqual(443, port)
-            self.assertEqual("GET", method)
-            self.assertEqual(
-                "/" if index == 0 else "/static/player/" + PLANTED_ASSET_ID,
-                path,
-            )
-            self.assertEqual({"Host": "probe-relay.example.invalid"}, headers)
-            self.assertNotIn("Origin", headers)
-            self.assertNotIn("Cookie", headers)
-            self.assertIsNone(body)
+            expected_method, expected_path, expected_headers, expected_body = expected
+            self.assertEqual(expected_method, method)
+            self.assertEqual(expected_path, path)
+            self.assertEqual(expected_headers, headers)
+            if expected_body is None:
+                self.assertIsNone(body)
+            else:
+                self.assertIsInstance(body, bytes)
+                payload_values = json.loads(body.decode("ascii")).values()
+                self.assertIn(PLANTED_VALUE, payload_values)
+                self.assertIn(PLANTED_FORM_VALUE, payload_values)
             self.assertLessEqual(timeout, 15)
+        auth = verdict["public_socket_auth"]
+        self.assertEqual(
+            {
+                "login_status": 200,
+                "cookie_flags_valid": True,
+                "socket_transport": "websocket",
+                "socket_connected": True,
+                "snapshot_valid": True,
+                "failure_reason": None,
+                "exception_class": None,
+            },
+            auth,
+        )
+        self.assertEqual(1, len(context.public_socket_factory.clients))
+        socket_client = context.public_socket_factory.clients[0]
+        self.assertEqual(["websocket"], socket_client.connect_call["transports"])
+        self.assertEqual(
+            [gate.PLAYER_NAMESPACE], socket_client.connect_call["namespaces"]
+        )
+        self.assertEqual(
+            PLANTED_PUBLIC_ORIGIN, socket_client.connect_call["headers"]["Origin"]
+        )
+        self.assertTrue(socket_client.disconnected)
+        self.assertFalse(socket_client.connected)
         self.assertFalse(
             (
                 context.state_base
@@ -277,6 +377,71 @@ class ProbeTests(unittest.TestCase):
         self.assertEqual("not_found", asset_step["error_code"])
         self.assertIn("stop", context.services[0].calls)
         self.assertIs(True, verdict["census"]["clean"])
+
+    def test_public_login_rejection_fails_and_stops(self) -> None:
+        context = self.build()
+        context.public_requester.responses[3] = gate.PublicHttpResponse(
+            401,
+            (("Content-Type", "application/json"),),
+            b'{"error":"authentication_required"}',
+        )
+        verdict, code = probe.run_probe(context.arguments, context.deps)
+        self.assertEqual(("FAIL", 1), (verdict["verdict"], code))
+        self.assertEqual("public_login_failed", verdict["reason"])
+        self.assertEqual(
+            {
+                "login_status": 401,
+                "cookie_flags_valid": False,
+                "socket_transport": "websocket",
+                "socket_connected": False,
+                "snapshot_valid": False,
+                "failure_reason": "public_login_rejected",
+                "exception_class": None,
+            },
+            verdict["public_socket_auth"],
+        )
+        names = [item["name"] for item in verdict["steps"]]
+        self.assertIn("public_login", names)
+        self.assertIn("public_socket_auth", names)
+        self.assertEqual([], context.public_socket_factory.clients)
+        self.assertIn("stop", context.services[0].calls)
+        self.assertIs(True, verdict["census"]["clean"])
+
+    def test_public_socket_runtime_error_is_bounded_and_stops(self) -> None:
+        context = self.build()
+        context.public_socket_factory.connect_exception = RuntimeError(
+            PLANTED_RAW_EXCEPTION
+        )
+        verdict, code = probe.run_probe(context.arguments, context.deps)
+        self.assertEqual(("FAIL", 1), (verdict["verdict"], code))
+        self.assertEqual("public_socket_auth_failed", verdict["reason"])
+        auth = verdict["public_socket_auth"]
+        self.assertEqual("public_socket_unavailable", auth["failure_reason"])
+        self.assertEqual("RuntimeError", auth["exception_class"])
+        self.assertNotIn(PLANTED_RAW_EXCEPTION, json.dumps(verdict, ensure_ascii=True))
+        self.assertNotIn(PLANTED_RAW_EXCEPTION, self.evidence_text(context).decode("ascii"))
+        self.assertIn("stop", context.services[0].calls)
+        self.assertIs(True, verdict["census"]["clean"])
+
+    def test_invalid_socket_snapshot_fails_and_stops(self) -> None:
+        context = self.build()
+        mismatched_snapshot = dict(context.public_socket_factory.snapshot)
+        mismatched_snapshot["session_epoch"] = "probe-session-epoch-different"
+        context.public_socket_factory.snapshot = mismatched_snapshot
+        verdict, code = probe.run_probe(context.arguments, context.deps)
+        self.assertEqual(("FAIL", 1), (verdict["verdict"], code))
+        self.assertEqual("public_socket_auth_failed", verdict["reason"])
+        self.assertEqual(
+            "public_socket_snapshot_invalid",
+            verdict["public_socket_auth"]["failure_reason"],
+        )
+        self.assertEqual(
+            "PublicClientError", verdict["public_socket_auth"]["exception_class"]
+        )
+        self.assertFalse(verdict["public_socket_auth"]["socket_connected"])
+        self.assertFalse(verdict["public_socket_auth"]["snapshot_valid"])
+        self.assertTrue(context.public_socket_factory.clients[0].disconnected)
+        self.assertIn("stop", context.services[0].calls)
 
     def test_public_shell_without_asset_reference_fails(self) -> None:
         context = self.build()
@@ -407,7 +572,7 @@ class ProbeTests(unittest.TestCase):
                     service_kwargs={
                         "fail_start": fail,
                         "issued_value": PLANTED_VALUE,
-                        "invitation": PLANTED_URL,
+                        "invitation": PLANTED_URL if fail else PLANTED_PUBLIC_ORIGIN,
                         "diagnostics": diagnostics,
                     },
                 )
@@ -415,9 +580,15 @@ class ProbeTests(unittest.TestCase):
                 text = self.evidence_text(context).decode("ascii")
                 for planted in (
                     PLANTED_VALUE,
+                    PLANTED_FORM_VALUE,
+                    PLANTED_PRELOGIN_VALUE,
+                    PLANTED_SESSION_VALUE,
+                    PLANTED_RESPONSE_VALUE,
                     PLANTED_HOSTNAME,
                     PLANTED_TUNNEL_ID,
                     PLANTED_URL,
+                    PLANTED_PUBLIC_ORIGIN,
+                    PLANTED_PUBLIC_AUTHORITY,
                     "planted-host.opentunnel.xyz",
                     "planted-tunnel-0001",
                     PLANTED_ASSET_ID,
