@@ -2360,6 +2360,10 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         self.assertEqual(result.verdict, "PASS")
         self.assertTrue(result.observed["unauthenticated_snapshot_data_free"])
         self.assertEqual(result.observed["unauthenticated_snapshot_status"], 404)
+        self.assertEqual(result.observed["authenticated_snapshot_status"], 200)
+        self.assertIsNone(
+            result.observed["authenticated_snapshot_error_code"]
+        )
         self.assertTrue(result.observed["authenticated_socket_snapshot_valid"])
         self.assertTrue(result.observed["host_socket_namespace_refused"])
         self.assertNotIn(service.credential, repr(result))
@@ -2528,6 +2532,13 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         self.assertEqual(
             exposed_socket.reason, "public_host_socket_namespace_exposed"
         )
+        self.assertEqual(
+            {
+                "authenticated_snapshot_status": 200,
+                "authenticated_snapshot_error_code": None,
+            },
+            exposed_socket.observed,
+        )
 
         accepted_wrong_password_service = FakePublicService()
         accepted_wrong_password_service.accept_invalid_credentials = True
@@ -2536,12 +2547,26 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         )
         self.assertEqual(accepted_wrong_password.verdict, "FAIL")
         self.assertEqual(accepted_wrong_password.reason, "invalid_credential_accepted")
+        self.assertEqual(
+            {
+                "authenticated_snapshot_status": 200,
+                "authenticated_snapshot_error_code": None,
+            },
+            accepted_wrong_password.observed,
+        )
 
         accepted_forged_origin_service = FakePublicService()
         accepted_forged_origin_service.accept_forged_origin = True
         accepted_forged_origin = execute_l03_variant(accepted_forged_origin_service)
         self.assertEqual(accepted_forged_origin.verdict, "FAIL")
         self.assertEqual(accepted_forged_origin.reason, "forged_origin_accepted")
+        self.assertEqual(
+            {
+                "authenticated_snapshot_status": 200,
+                "authenticated_snapshot_error_code": None,
+            },
+            accepted_forged_origin.observed,
+        )
 
         refused_socket_service = FakePublicService()
         refused_socket_service.player_namespace_refused = True
@@ -2652,6 +2677,127 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         )
         self.assertNotIn(service.accepted_origin, repr(result.observed))
         self.assertNotIn("sharing-player.example", repr(result.observed))
+
+    def test_l03_authenticated_snapshot_failure_records_only_bounded_observation(
+        self,
+    ) -> None:
+        secret = "authenticated-snapshot-private-sentinel"
+        cases = (
+            (
+                "snapshot-unavailable",
+                gate.PublicHttpResponse(
+                    503,
+                    (("X-Diagnostic-Secret", secret),),
+                    json.dumps(
+                        {"error": "snapshot_unavailable", "detail": secret}
+                    ).encode("ascii"),
+                ),
+                503,
+                "snapshot_unavailable",
+            ),
+            (
+                "rate-limited",
+                gate.PublicHttpResponse(
+                    429,
+                    (("Content-Type", "application/json"),),
+                    b'{"error":"rate_limited"}',
+                ),
+                429,
+                "rate_limited",
+            ),
+            (
+                "malicious-reason",
+                gate.PublicHttpResponse(
+                    503,
+                    (("X-Diagnostic-Secret", secret),),
+                    json.dumps({"error": secret, "token": secret}).encode("ascii"),
+                ),
+                503,
+                "unclassified",
+            ),
+            (
+                "malformed-body",
+                gate.PublicHttpResponse(
+                    503,
+                    (("Content-Type", "application/json"),),
+                    ('{"error":"snapshot_unavailable","detail":"%s"' % secret).encode(
+                        "ascii"
+                    ),
+                ),
+                503,
+                "unclassified",
+            ),
+        )
+        for case, response, expected_status, expected_error in cases:
+            with self.subTest(case=case):
+                service = FakePublicService()
+                ready = {
+                    "state": "ready",
+                    "reason": "ready",
+                    "generation": 1,
+                    "companion_launches": 1,
+                }
+                api = LifecycleFakeApi(
+                    status={"state": "off", "reason": "off"},
+                    post_handlers={
+                        "issue-access": lambda _payload, current=service: (
+                            gate.HostApiResponse(
+                                200,
+                                {"ok": True, "credential": current.credential},
+                            )
+                        ),
+                        "start": lambda _payload: gate.HostApiResponse(
+                            200, {"ok": True, "reason": "ready", "status": ready}
+                        ),
+                        "copy-invitation": lambda _payload, current=service: (
+                            gate.HostApiResponse(
+                                200,
+                                {
+                                    "ok": True,
+                                    "invitation": current.accepted_origin,
+                                },
+                            )
+                        ),
+                    },
+                )
+                context = self.make_row_context(api=api, public_service=service)
+                self.prepare_l03_startup(context, api)
+                original_request = context.public_client._requester
+                snapshot_reads = 0
+
+                def requester(
+                    hostname,
+                    port,
+                    method,
+                    path,
+                    headers,
+                    body,
+                    timeout,
+                ):
+                    nonlocal snapshot_reads
+                    if method == "GET" and path == "/api/player/snapshot":
+                        snapshot_reads += 1
+                        if snapshot_reads == 2:
+                            return response
+                    return original_request(
+                        hostname, port, method, path, headers, body, timeout
+                    )
+
+                context.public_client._requester = requester
+                result = gate.L03PublicAccessExecutor().execute(context)
+
+                self.assertEqual("FAIL", result.verdict)
+                self.assertEqual("authenticated_snapshot_unavailable", result.reason)
+                self.assertEqual(
+                    {
+                        "authenticated_snapshot_status": expected_status,
+                        "authenticated_snapshot_error_code": expected_error,
+                    },
+                    result.observed,
+                )
+                emitted = json.dumps(result.observed, ensure_ascii=True)
+                self.assertNotIn(secret, emitted)
+                self.assertNotIn(secret, repr(result))
 
     def test_l03_startup_prechecks_fail_before_socket_connection(self) -> None:
         context = self.make_row_context()

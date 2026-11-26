@@ -88,7 +88,6 @@ _URL_PATTERN = re.compile(r"(?i)\bhttps?://[^\s\"'<>]+")
 _PUBLIC_ASSET_PATTERN = re.compile(
     rb"/static/player/([A-Za-z0-9._-]{1,128})(?=[?#\"'\s])"
 )
-_PUBLIC_ERROR_CODE_PATTERN = re.compile(r"[a-z_]{1,64}\Z")
 PUBLIC_GET_TIMEOUT_SECONDS = min(gate.PUBLIC_CLIENT_TIMEOUT_SECONDS, 15.0)
 
 _PUBLIC_FAILURE_REASONS = frozenset(
@@ -624,25 +623,6 @@ def _content_type_class(response: gate.PublicHttpResponse) -> str:
     return "invalid"
 
 
-def _public_error_code(response: gate.PublicHttpResponse) -> str | None:
-    try:
-        payload = json.loads(
-            response.body.decode("utf-8"),
-            object_pairs_hook=gate._unique_object,
-            parse_constant=gate._reject_json_constant,
-        )
-    except (UnicodeError, json.JSONDecodeError, TypeError, ValueError):
-        return None
-    if (
-        not isinstance(payload, dict)
-        or set(payload) != {"error"}
-        or not isinstance(payload["error"], str)
-        or _PUBLIC_ERROR_CODE_PATTERN.fullmatch(payload["error"]) is None
-    ):
-        return None
-    return payload["error"]
-
-
 def _is_login_shell(body: bytes) -> bool:
     from web.extensions.player.assets import PRELOGIN_CSRF_PLACEHOLDER
 
@@ -927,6 +907,8 @@ def run_probe(
         "socket_transport": "websocket",
         "socket_connected": False,
         "snapshot_valid": False,
+        "snapshot_status": None,
+        "snapshot_error_code": None,
         "failure_reason": None,
         "exception_class": None,
     }
@@ -1164,9 +1146,9 @@ def run_probe(
                     "shell_references_asset": shell_references_asset,
                 }
                 if shell.status != 200:
-                    error_code = _public_error_code(shell)
-                    if error_code is not None:
-                        shell_observation["error_code"] = error_code
+                    shell_observation["error_code"] = gate._public_route_error_code(
+                        shell
+                    )
                     step("public_shell_get", begun, "failed", **shell_observation)
                     raise _ProbeStepFailed("public_shell_get_failed")
                 if (
@@ -1214,9 +1196,9 @@ def run_probe(
                     "shell_references_asset": True,
                 }
                 if asset.status != 200:
-                    error_code = _public_error_code(asset)
-                    if error_code is not None:
-                        asset_observation["error_code"] = error_code
+                    asset_observation["error_code"] = gate._public_route_error_code(
+                        asset
+                    )
                     step("public_asset_get", begun, "failed", **asset_observation)
                     raise _ProbeStepFailed("public_asset_get_failed")
                 if not asset.body:
@@ -1320,15 +1302,25 @@ def run_probe(
                         else nullcontext()
                     )
                     with network_scope:
+                        public_socket_auth["snapshot_error_code"] = (
+                            gate._PUBLIC_ROUTE_ERROR_FALLBACK
+                        )
                         authenticated = client.authenticated_snapshot(session)
+                        public_socket_auth["snapshot_status"] = (
+                            gate._public_status_value(authenticated)
+                        )
                         snapshot = gate._decode_player_snapshot(authenticated)
                         if snapshot is None:
+                            public_socket_auth["snapshot_error_code"] = (
+                                gate._public_route_error_code(authenticated)
+                            )
                             socket_failure_reason = (
                                 "public_authenticated_snapshot_rejected"
                                 if authenticated.status != 200
                                 else "public_authenticated_snapshot_invalid"
                             )
                         else:
+                            public_socket_auth["snapshot_error_code"] = None
                             connected = client.connect_player_socket(session, snapshot)
                             public_socket_auth["socket_connected"] = bool(
                                 connected and client.socket_connected is True
@@ -1353,6 +1345,8 @@ def run_probe(
                         socket_transport="websocket",
                         socket_connected=False,
                         snapshot_valid=False,
+                        snapshot_status=public_socket_auth["snapshot_status"],
+                        snapshot_error_code=public_socket_auth["snapshot_error_code"],
                         failure_reason=socket_failure_reason,
                         exception_class=socket_exception_class,
                     )
@@ -1364,6 +1358,8 @@ def run_probe(
                     socket_transport="websocket",
                     socket_connected=public_socket_auth["socket_connected"],
                     snapshot_valid=public_socket_auth["snapshot_valid"],
+                    snapshot_status=public_socket_auth["snapshot_status"],
+                    snapshot_error_code=public_socket_auth["snapshot_error_code"],
                 )
             except _ProbeStepFailed as exc:
                 failure = exc.reason

@@ -97,6 +97,19 @@ MAX_API_JSON_DEPTH = 16
 MAX_PUBLIC_RESPONSE_BYTES = 1024 * 1024
 MAX_PUBLIC_PROBE_BODY_BYTES = 8192
 MAX_PLAYER_SHELL_BYTES = 512 * 1024
+_PUBLIC_ROUTE_ERROR_CODES = frozenset(
+    {
+        "request_rejected",
+        "not_found",
+        "rate_limited",
+        "client_version_mismatch",
+        "client_assets_unavailable",
+        "invalid_request",
+        "snapshot_too_large",
+        "snapshot_unavailable",
+    }
+)
+_PUBLIC_ROUTE_ERROR_FALLBACK = "unclassified"
 PUBLIC_CLIENT_TIMEOUT_SECONDS = 8.0
 PUBLIC_POLL_INTERVAL_SECONDS = 0.1
 MAX_PROCESS_TABLE_BYTES = 1024 * 1024
@@ -2855,6 +2868,7 @@ def _start_local_game_runtime(
 class L03PublicAccessExecutor:
     def execute(self, context: RowContext) -> RowExecutionResult:
         client = context.public_client
+        snapshot_observation: dict[str, object] | None = None
         try:
             startup_observed, startup_failure = _start_local_game_runtime(context)
             if startup_failure is not None:
@@ -2922,24 +2936,11 @@ class L03PublicAccessExecutor:
             _mark_step(context, "boundary_checks")
             shell = client.request("GET", "/")
             if shell.status != 200:
-                shell_error = None
-                try:
-                    shell_payload = json.loads(shell.body.decode("utf-8"))
-                except (UnicodeError, json.JSONDecodeError):
-                    shell_payload = None
-                if isinstance(shell_payload, dict):
-                    error_value = shell_payload.get("error")
-                    if (
-                        isinstance(error_value, str)
-                        and re.fullmatch(r"[a-z_]{1,64}", error_value) is not None
-                    ):
-                        shell_error = error_value
+                shell_error = _public_route_error_code(shell)
                 return _failed(
                     "public_player_shell_unavailable",
                     observed={
-                        "public_shell_status": (
-                            shell.status if type(shell.status) is int else None
-                        ),
+                        "public_shell_status": _public_status_value(shell),
                         "public_shell_error": shell_error,
                     },
                 )
@@ -2985,30 +2986,61 @@ class L03PublicAccessExecutor:
             context.remember_secret(session.cookie)
             context.remember_secret(session.csrf_token)
 
+            snapshot_observation = {
+                "authenticated_snapshot_status": None,
+                "authenticated_snapshot_error_code": (
+                    _PUBLIC_ROUTE_ERROR_FALLBACK
+                ),
+            }
             snapshot_response = client.authenticated_snapshot(session)
+            snapshot_observation["authenticated_snapshot_status"] = (
+                _public_status_value(snapshot_response)
+            )
             snapshot = _decode_player_snapshot(snapshot_response)
             if snapshot is None:
-                return _failed("authenticated_snapshot_unavailable")
+                snapshot_observation["authenticated_snapshot_error_code"] = (
+                    _public_route_error_code(snapshot_response)
+                )
+                return _failed(
+                    "authenticated_snapshot_unavailable",
+                    observed=snapshot_observation,
+                )
+            snapshot_observation["authenticated_snapshot_error_code"] = None
             if not client.connect_player_socket(session, snapshot):
-                return _failed("authenticated_player_socket_unavailable")
+                return _failed(
+                    "authenticated_player_socket_unavailable",
+                    observed=snapshot_observation,
+                )
 
             if not client.probe_host_socket_namespace():
-                return _failed("public_host_socket_namespace_exposed")
+                return _failed(
+                    "public_host_socket_namespace_exposed",
+                    observed=snapshot_observation,
+                )
 
             wrong_response, wrong_challenge = client.login_challenge()
             if wrong_response.status != 200 or wrong_challenge is None:
-                return _blocked("invalid_credential_probe_unavailable")
+                return _blocked(
+                    "invalid_credential_probe_unavailable",
+                    observed=snapshot_observation,
+                )
             context.remember_secret(wrong_challenge.csrf_nonce)
             context.remember_secret(wrong_challenge.prelogin_cookie)
             wrong_login, _wrong_session = client.login(
                 wrong_challenge, credential + "-invalid"
             )
             if wrong_login.status not in {400, 401, 403}:
-                return _failed("invalid_credential_accepted")
+                return _failed(
+                    "invalid_credential_accepted",
+                    observed=snapshot_observation,
+                )
 
             forged_response, forged_challenge = client.login_challenge()
             if forged_response.status != 200 or forged_challenge is None:
-                return _blocked("forged_origin_probe_unavailable")
+                return _blocked(
+                    "forged_origin_probe_unavailable",
+                    observed=snapshot_observation,
+                )
             context.remember_secret(forged_challenge.csrf_nonce)
             context.remember_secret(forged_challenge.prelogin_cookie)
             forged_login, _forged_session = client.login(
@@ -3017,7 +3049,10 @@ class L03PublicAccessExecutor:
                 origin_override="https://forged.invalid",
             )
             if forged_login.status != 403:
-                return _failed("forged_origin_accepted")
+                return _failed(
+                    "forged_origin_accepted",
+                    observed=snapshot_observation,
+                )
 
             return _include_companion_post_observation(context, RowExecutionResult(
                 "PASS",
@@ -3030,6 +3065,7 @@ class L03PublicAccessExecutor:
                     "host_route_statuses": host_path_statuses,
                     "valid_login_status": login_response.status,
                     "session_cookie_flags_valid": True,
+                    **snapshot_observation,
                     "authenticated_snapshot_valid": True,
                     "authenticated_socket_snapshot_valid": True,
                     "host_socket_namespace_refused": True,
@@ -3039,20 +3075,22 @@ class L03PublicAccessExecutor:
                 },
             ))
         except PublicClientError as exc:
+            observed = snapshot_observation or {}
             if _is_observed_public_contract_failure(exc.reason):
                 return _result_with_failure_diagnostic(
-                    _failed("public_response_contract_invalid"),
+                    _failed("public_response_contract_invalid", observed=observed),
                     gate_step="l03_public_access",
                     exception=exc,
                 )
             return _result_with_failure_diagnostic(
-                _blocked("l03_public_observation_unavailable"),
+                _blocked("l03_public_observation_unavailable", observed=observed),
                 gate_step="l03_public_access",
                 exception=exc,
             )
         except (HostApiError, GateError, ValueError) as exc:
+            observed = snapshot_observation or {}
             return _result_with_failure_diagnostic(
-                _blocked("l03_public_observation_unavailable"),
+                _blocked("l03_public_observation_unavailable", observed=observed),
                 gate_step="l03_public_access",
                 exception=exc,
             )
@@ -5602,6 +5640,47 @@ def _data_free_protected_refusal(response: PublicHttpResponse) -> bool:
         and value.get("error")
         in {"authentication_required", "not_found", "request_rejected"}
     )
+
+
+def _public_status_value(response: object) -> int | None:
+    if (
+        isinstance(response, PublicHttpResponse)
+        and type(response.status) is int
+        and 100 <= response.status <= 599
+    ):
+        return response.status
+    return None
+
+
+def _public_route_error_code(response: object) -> str:
+    if (
+        not isinstance(response, PublicHttpResponse)
+        or type(response.status) is not int
+        or not 100 <= response.status <= 599
+        or type(response.body) is not bytes
+        or len(response.body) > MAX_PUBLIC_PROBE_BODY_BYTES
+    ):
+        return _PUBLIC_ROUTE_ERROR_FALLBACK
+    try:
+        value = json.loads(
+            response.body.decode("utf-8"),
+            object_pairs_hook=_unique_object,
+            parse_constant=_reject_json_constant,
+        )
+    except (
+        UnicodeError,
+        json.JSONDecodeError,
+        ValueError,
+        TypeError,
+        RecursionError,
+    ):
+        return _PUBLIC_ROUTE_ERROR_FALLBACK
+    if not isinstance(value, dict):
+        return _PUBLIC_ROUTE_ERROR_FALLBACK
+    error = value.get("error")
+    if type(error) is str and error in _PUBLIC_ROUTE_ERROR_CODES:
+        return error
+    return _PUBLIC_ROUTE_ERROR_FALLBACK
 
 
 def _is_observed_public_contract_failure(reason: str) -> bool:
