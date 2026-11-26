@@ -29,6 +29,7 @@ from scripts.mapping_pilot.manifest import PROJECT_ROOT
 class MappingPilotLauncherHashTests(unittest.TestCase):
     def setUp(self) -> None:
         self.scratch = Path("tmp") / ("mapping_pilot_launcher_" + uuid.uuid4().hex)
+        (PROJECT_ROOT / self.scratch).mkdir(parents=True, exist_ok=True)
 
     def tearDown(self) -> None:
         shutil.rmtree(PROJECT_ROOT / self.scratch, ignore_errors=True)
@@ -129,6 +130,7 @@ class MappingPilotFrozenOpenExitResumeTests(unittest.TestCase):
 
     def setUp(self) -> None:
         self.scratch = Path("tmp") / ("mapping_pilot_open_exit_" + uuid.uuid4().hex)
+        (PROJECT_ROOT / self.scratch).mkdir(parents=True, exist_ok=True)
 
     def tearDown(self) -> None:
         shutil.rmtree(PROJECT_ROOT / self.scratch, ignore_errors=True)

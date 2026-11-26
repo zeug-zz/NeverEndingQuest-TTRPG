@@ -29,6 +29,17 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+
+def setUpModule() -> None:
+    (PROJECT_ROOT / "tmp").mkdir(parents=True, exist_ok=True)
+
+
+def _require_repository_python(test_case: unittest.TestCase) -> None:
+    path = PROJECT_ROOT / ".venv" / "bin" / "python"
+    if not path.is_file():
+        test_case.skipTest("missing required path: %s" % path)
+
+
 from scripts import live_gate_preflight_controller as controller
 from scripts import live_gate_preflight_evidence as evidence
 from scripts.live_gate_preflight_controller import (
@@ -185,6 +196,42 @@ def _baseline_profile_patches() -> list[Any]:
 
 class TestPreflightRowIntegration(unittest.TestCase):
     def setUp(self) -> None:
+        if self._testMethodName in {
+            "test_all_26_planned_rows_cross_existing_sp3_interfaces",
+            "test_capture_rejects_durable_release_log_that_differs_from_sidecar",
+            "test_checkpoint_result_reconciles_late_guarded_child_evidence",
+            "test_comparison_identity_is_reconciled_from_retained_worker_and_teardown",
+            "test_four_pc_resume_profile_runs_on_its_declared_row",
+            "test_invocation_mismatch_blocks_before_seeding_or_worker_launch",
+            "test_late_parent_subprocess_events_are_preserved_and_rejected",
+            "test_measured_resume_without_row_checkpoint_stays_missing_and_unverified",
+            "test_measured_startup_call_count_mismatch_blocks_and_cleans_sandbox",
+            "test_measured_startup_call_site_mismatch_blocks",
+            "test_measured_startup_profile_matches_calls_but_resume_stays_unverified",
+            "test_missing_fixture_payload_is_reported_and_never_covered",
+            "test_missing_secondary_or_resume_intent_fails_closed_before_seed",
+            "test_multi_fixture_row_runs_each_measured_fixture_lifecycle_independently",
+            "test_retained_reconciliation_accepts_both_attributed_shutdown_forms",
+            "test_retained_reconciliation_rejects_active_listener_and_incomplete_teardown",
+            "test_retained_reconciliation_rejects_missing_malformed_and_tampered_files",
+            "test_retained_reconciliation_rejects_unguarded_and_foreign_egress_events",
+            "test_retained_teardown_sidecar_fails_closed_on_missing_tampered_and_conflicting_proof",
+            "test_retained_v2_wait_proof_is_strict_and_legacy_v1_still_validates",
+            "test_retained_validation_snapshot_preserves_complete_journal",
+            "test_retained_validator_input_bundle_fails_closed_on_missing_or_tampered_copy",
+            "test_retained_validator_inputs_are_self_contained_for_offline_revalidation",
+            "test_retained_worker_checkpoint_travel_is_required_and_exact",
+            "test_secondary_and_resume_intent_mismatches_block_before_seed_or_launch",
+            "test_sequential_lifecycles_capture_fresh_snapshot_before_supervision",
+            "test_stale_call_site_file_hash_blocks_as_profile_mismatch",
+            "test_stale_id_map_file_literal_blocks_location_mapping_unresolved",
+            "test_stale_stub_hash_blocks_as_profile_mismatch",
+            "test_supervised_interfaces_bind_seed_worker_and_cleanup_apis",
+            "test_supervised_interfaces_forward_comparison_identity_to_row_supervisor",
+            "test_supervised_interfaces_pass_none_comparison_identity_in_same_sha_mode",
+            "test_supplied_row_checkpoint_runs_guarded_resume_and_matches_profile",
+        }:
+            _require_repository_python(self)
         global RUN_ID
         RUN_ID = "rtest-" + uuid.uuid4().hex[:12]
         self.retained_run_directory = (
@@ -4782,6 +4829,11 @@ class TestSupervisedEvidenceIntegration(unittest.TestCase):
                 self.assertEqual(str(caught.exception), expected)
 
     def setUp(self) -> None:
+        if (
+            self._testMethodName
+            == "test_supervised_entrypoint_persists_worker_identity_mismatch_without_host_start"
+        ):
+            _require_repository_python(self)
         self.run_id = "evidence-integration-" + uuid.uuid4().hex[:12]
         self.evidence_root = (
             PROJECT_ROOT
@@ -4981,6 +5033,7 @@ class TestRequiredLifecycleCheckpointPolicy(unittest.TestCase):
     """Exercise required/extra lifecycle decisions without starting a host."""
 
     def setUp(self) -> None:
+        _require_repository_python(self)
         self.run_id = "checkpoint-policy-" + uuid.uuid4().hex[:10]
         self.rows, _reserves = _load_frozen_row_ids(None)
         loaded_profiles, self.coverage = _load_profiles(

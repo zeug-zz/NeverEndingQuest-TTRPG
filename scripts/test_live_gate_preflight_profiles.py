@@ -105,6 +105,23 @@ from scripts.live_gate_preflight_comparison_identity import (
 )
 
 
+def setUpModule() -> None:
+    (PROJECT_ROOT / "tmp").mkdir(parents=True, exist_ok=True)
+
+
+def _require_repository_python(test_case: unittest.TestCase) -> None:
+    path = PROJECT_ROOT / ".venv" / "bin" / "python"
+    if not path.is_file():
+        test_case.skipTest("missing required path: %s" % path)
+
+
+def _require_repository_python_for(
+    test_case: unittest.TestCase, test_names: set[str]
+) -> None:
+    if test_case._testMethodName in test_names:
+        _require_repository_python(test_case)
+
+
 _LEGACY_LIFECYCLE_FIELDS = {
     "status",
     "call_count",
@@ -417,6 +434,35 @@ def copy_baseline_profile_document() -> dict[str, Any]:
     return json.loads(BASELINE_PROFILE_PATH.read_text(encoding="utf-8"))
 
 class TestLiveGatePreflightProfiles(unittest.TestCase):
+    def setUp(self) -> None:
+        _require_repository_python_for(
+            self,
+            {
+                "test_checkpoint_profile_evidence_accepts_late_guarded_children",
+                "test_late_guard_startup_relaxation_is_checkpoint_only_and_fail_closed",
+                "test_measured_profile_requires_stub_source_call_sites_and_exact_identity",
+                "test_profile_evidence_accepts_guarded_controller_child_sockets_before_host",
+                "test_profile_evidence_accepts_guarded_host_child_listener",
+                "test_profile_evidence_hash_and_identity_mismatches_fail_closed",
+                "test_profile_evidence_rechecks_callsite_file_hash_and_summary",
+                "test_profile_evidence_records_only_the_synthetic_provider_placeholder",
+                "test_profile_evidence_rejects_controller_child_socket_without_startup",
+                "test_profile_evidence_rejects_guarded_controller_child_as_host_listener",
+                "test_profile_evidence_rejects_invalid_embedded_startup_canaries",
+                "test_profile_evidence_rejects_malformed_and_duplicate_key_json",
+                "test_profile_evidence_rejects_malformed_incomplete_and_unguarded_samples",
+                "test_profile_evidence_rejects_spoofed_listener_and_surviving_host_socket",
+                "test_profile_evidence_requires_attributed_graceful_worker_shutdown",
+                "test_profile_evidence_requires_real_topology_and_complete_pid_census",
+                "test_profile_evidence_requires_repository_venv_prefix_identity",
+                "test_profile_evidence_requires_startup_guard_and_completed_exchange",
+                "test_profile_evidence_symlink_is_rejected",
+                "test_profile_evidence_validates_socket_rows_and_guard_ownership_end_to_end",
+                "test_profile_invocation_identity_must_match_worker_observations",
+                "test_summary_child_sidecar_hash_is_reconciled_with_profile_evidence",
+            },
+        )
+
     def test_controller_command_allows_only_multiline_code_argument(self) -> None:
         command = ["/venv/bin/python", "-P", "-c", "print('one')\nprint('two')"]
         self.assertTrue(_valid_controller_command(command))
@@ -790,7 +836,12 @@ class TestLiveGatePreflightProfiles(unittest.TestCase):
                 self.assertFalse(coverage["booking_eligible"])
                 checked += 1
         if checked == 0:
-            self.skipTest("retained P4 FR-11 characterization evidence is unavailable")
+            missing = [
+                str(PROJECT_ROOT / relative_path)
+                for relative_path, _expected_hash, _expected_source, _profile_id in records
+                if not (PROJECT_ROOT / relative_path).is_file()
+            ]
+            self.skipTest("missing required path(s): %s" % ", ".join(missing))
 
     def test_retained_real_startup_evidence_validates_offline(self) -> None:
         evidence_path = Path(
@@ -798,7 +849,7 @@ class TestLiveGatePreflightProfiles(unittest.TestCase):
             "fr11-tower-p1-startup-01/profile-evidence.json"
         )
         if not evidence_path.is_file():
-            self.skipTest("retained FR-11 characterization evidence is unavailable")
+            self.skipTest("missing required path: %s" % (PROJECT_ROOT / evidence_path))
         raw = evidence_path.read_bytes()
         self.assertEqual(
             hashlib.sha256(raw).hexdigest(),
@@ -2290,6 +2341,32 @@ class TestLiveGatePreflightProfiles(unittest.TestCase):
 
 
 class TestPreflightStubAndSafety(unittest.TestCase):
+    def setUp(self) -> None:
+        _require_repository_python_for(
+            self,
+            {
+                "test_actual_host_command_prelaunch_canary_exits_before_worker_entrypoint",
+                "test_characterization_stub_covers_observed_tasks_with_source_shapes",
+                "test_child_without_guard_environment_fails_closed_before_entrypoint",
+                "test_dedicated_startup_guard_records_each_role_and_exact_environment",
+                "test_exact_startup_process_canary_exits_before_entrypoint",
+                "test_guarded_environment_never_copies_secret_or_proxy_values",
+                "test_missing_dedicated_guard_path_fails_before_preflight_work",
+                "test_required_startup_guard_rejects_a_missing_guard_switch",
+                "test_startup_canary_rejects_command_and_environment_identity_drift",
+                "test_stub_counts_calls_and_records_source_command_sha_and_pythonpath",
+                "test_stub_counts_then_rejects_unsupported_router_call",
+                "test_stub_redacts_sensitive_command_arguments",
+                "test_stub_refuses_to_initialize_without_guard",
+                "test_summary_child_interceptor_does_not_launch_without_authorization",
+                "test_summary_child_interceptor_rejects_a_blocked_launch_record",
+                "test_summary_child_interceptor_rejects_altered_script_and_command",
+                "test_summary_child_interceptor_rejects_secrets_and_bad_canary",
+                "test_summary_child_record_rejects_legacy_blocked_evidence",
+                "test_summary_child_validator_rejects_blocked_unpersisted_evidence",
+            },
+        )
+
     def test_stub_counts_calls_and_records_source_command_sha_and_pythonpath(self) -> None:
         completed = self._run_guarded_test_child("--stub-probe")
         payload = json.loads(completed.stdout)
@@ -3055,6 +3132,9 @@ class TestPreflightStubAndSafety(unittest.TestCase):
         return sandbox, location_name, str(area.get("areaId") or "CTR001")
 
     def test_real_guarded_adv_summary_child_returns_and_persists(self) -> None:
+        required_area = PROJECT_ROOT / "modules" / "Capture_Arena" / "areas" / "CTR001.json"
+        if not required_area.is_file():
+            self.skipTest("missing required path: %s" % required_area)
         sandbox, location_name, area_id = self._prepare_real_adv_summary_sandbox()
         run_id = "summary-child-real-" + uuid.uuid4().hex[:12]
         evidence_directory = PROJECT_ROOT / GUARD_EVENT_ROOT / run_id
@@ -3587,6 +3667,9 @@ class TestPreflightStubAndSafety(unittest.TestCase):
     def test_summary_child_retention_accepts_host_journal_rewrite_after_child(
         self,
     ) -> None:
+        required_area = PROJECT_ROOT / "modules" / "Capture_Arena" / "areas" / "CTR001.json"
+        if not required_area.is_file():
+            self.skipTest("missing required path: %s" % required_area)
         sandbox, location_name, area_id = self._prepare_real_adv_summary_sandbox()
         run_id = "summary-child-journal-rewrite-" + uuid.uuid4().hex[:12]
         evidence_directory = PROJECT_ROOT / GUARD_EVENT_ROOT / run_id
@@ -4653,6 +4736,29 @@ class TestPreflightStubAndSafety(unittest.TestCase):
 
 
 class TestProfileCharacterizationRunner(unittest.TestCase):
+    def setUp(self) -> None:
+        _require_repository_python_for(
+            self,
+            {
+                "test_characterization_drives_exchange_after_readiness_and_rejects_incomplete",
+                "test_e04_shape_accepts_guarded_controller_time_wait_through_teardown",
+                "test_host_ready_rejects_absent_foreign_wrong_unguarded_and_malformed_listeners",
+                "test_netstat_census_filters_pids_before_endpoint_parsing",
+                "test_netstat_fails_closed_on_malformed_run_pid_owner_suffix",
+                "test_netstat_fails_closed_on_malformed_run_pid_row",
+                "test_netstat_fails_closed_on_nonfield_owner_trailing_suffix",
+                "test_netstat_fails_closed_on_unrecorded_non_loopback_foreign_endpoint",
+                "test_netstat_fails_closed_when_run_socket_pid_has_no_startup_event",
+                "test_parent_launch_requires_guard_path_and_valid_startup_canary",
+                "test_process_census_accepts_guarded_controller_child_socket_before_host",
+                "test_process_census_rejects_child_pid_without_startup_event",
+                "test_repository_venv_identity_rejects_resolved_system_interpreter",
+                "test_resolved_system_interpreter_fails_startup_identity_canary",
+                "test_startup_canary_record_rejects_pid_invocation_guard_and_venv_drift",
+                "test_worker_without_startup_guard_fails_before_host_launch",
+            },
+        )
+
     @staticmethod
     def _lock_record(**overrides: object) -> dict:
         record = profile_runner._build_live_window_lock_record(
@@ -7747,6 +7853,9 @@ class TestProfileCharacterizationRunner(unittest.TestCase):
         self.assertEqual(timed_out.calls[-1], ("close",))
 
     def test_worker_traverses_lifecycle_entrypoint_with_startup_guard_and_fails_closed(self) -> None:
+        project_config = PROJECT_ROOT / "config.py"
+        if not project_config.is_file():
+            self.skipTest("missing required path: %s" % project_config)
         with tempfile.TemporaryDirectory(prefix="profile-worker-", dir=PROJECT_ROOT / "tmp") as temp_root:
             sandbox = Path(temp_root).resolve()
             relative_sandbox = sandbox.relative_to(PROJECT_ROOT).as_posix()
@@ -9008,6 +9117,16 @@ class TestCheckpointTravelPreparation(unittest.TestCase):
 
 
 class TestProfileSandboxPreparation(unittest.TestCase):
+    def setUp(self) -> None:
+        _require_repository_python_for(
+            self,
+            {
+                "test_preparation_entrypoint_fails_closed_without_dedicated_guard_path",
+                "test_preparation_entrypoint_uses_dedicated_guard_and_never_accesses_project_config",
+                "test_preparation_origin_guard_blocks_helper_importing_project_config",
+            },
+        )
+
     def test_fake_provider_free_sandbox_uses_synthetic_config_without_launch(self) -> None:
         for party_size in (1, 4):
             with self.subTest(party_size=party_size), tempfile.TemporaryDirectory(
@@ -10407,6 +10526,11 @@ class TestWorkerHostCommandComparisonIdentity(unittest.TestCase):
     """Worker and launch sides must declare the same comparison-mode command."""
 
     RUNNER_PATH = PROJECT_ROOT / "scripts" / "live_gate_preflight_profile_runner.py"
+
+    def setUp(self) -> None:
+        _require_repository_python_for(
+            self, {"test_comparison_identity_pair_is_declared_in_host_command"}
+        )
 
     def _identity(self) -> dict[str, Any]:
         return build_comparison_identity(
