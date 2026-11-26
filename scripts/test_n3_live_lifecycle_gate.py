@@ -363,26 +363,56 @@ class FakePublicSocket:
         self.handlers: dict[tuple[str, str], object] = {}
         self.eio = SimpleNamespace(state="disconnected")
         self.events_received = 0
+        self.connect_args: tuple[object, ...] = ()
+        self.connect_kwargs: dict[str, object] = {}
 
     def on(self, event: str, handler, *, namespace: str) -> None:
         self.handlers[(namespace, event)] = handler
 
     def connect(self, url: str, **kwargs: object) -> None:
+        self.connect_args = (url,)
+        self.connect_kwargs = dict(kwargs)
         if not self.server.available:
             raise gate.socketio.exceptions.ConnectionError("transport unavailable")
         if kwargs.get("namespaces") == ["/"]:
+            headers = kwargs.get("headers")
+            cookie = (
+                self.server._cookie_value(
+                    headers.get("Cookie", ""), "neq_player_session"
+                )
+                if isinstance(headers, Mapping)
+                else None
+            )
+            if (
+                not isinstance(headers, Mapping)
+                or any(
+                    isinstance(name, str) and name.casefold() == "origin"
+                    for name in headers
+                )
+                or cookie not in self.server.sessions
+            ):
+                raise gate.socketio.exceptions.ConnectionError("Connection error")
             self.eio.state = "connected"
             if self.server.allow_host_namespace:
                 self.connected = True
                 return
-            raise gate.socketio.exceptions.ConnectionError("namespace / refused")
+            raise gate.socketio.exceptions.ConnectionError(
+                "One or more namespaces failed to connect: /"
+            )
         headers = kwargs.get("headers")
         auth = kwargs.get("auth")
+        has_custom_origin = (
+            isinstance(headers, Mapping)
+            and any(
+                isinstance(name, str) and name.casefold() == "origin"
+                for name in headers
+            )
+        )
         if (
             url != self.server.accepted_origin
             or self.server.player_namespace_refused
             or not isinstance(headers, Mapping)
-            or headers.get("Origin") != self.server.accepted_origin
+            or has_custom_origin
             or not self.server._cookie_value(
                 headers.get("Cookie", ""), "neq_player_session"
             )
@@ -2057,6 +2087,73 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
         )
         self.assertNotIn("row-reason-secret-sentinel", repr(result.observed))
 
+    def test_diagnostic_exception_class_uses_deepest_allowlisted_cause(self) -> None:
+        for expected in (
+            (
+                gate.socketio.exceptions.ConnectionError,
+                "SocketIOConnectionError",
+            ),
+            (
+                gate.engineio.exceptions.ConnectionError,
+                "EngineIOConnectionError",
+            ),
+            (
+                gate.websocket.WebSocketBadStatusException,
+                "WebSocketBadStatusException",
+            ),
+        ):
+            self.assertIn(expected, gate._DIAGNOSTIC_EXCEPTION_CLASSES)
+
+        class FakeSocketIOError(Exception):
+            pass
+
+        class FakeEngineIOError(Exception):
+            pass
+
+        class FakeWebSocketBadStatusError(Exception):
+            pass
+
+        fake_types = (
+            (FakeSocketIOError, "SocketIOConnectionError"),
+            (FakeEngineIOError, "EngineIOConnectionError"),
+            (FakeWebSocketBadStatusError, "WebSocketBadStatusException"),
+        )
+        with patch.object(
+            gate,
+            "_DIAGNOSTIC_EXCEPTION_CLASSES",
+            gate._DIAGNOSTIC_EXCEPTION_CLASSES + fake_types,
+        ):
+            for fake_type, expected_label in fake_types:
+                with self.subTest(expected_label=expected_label):
+                    self.assertEqual(
+                        gate._diagnostic_exception_class(fake_type()),
+                        expected_label,
+                    )
+
+            outer = ValueError("outer")
+            middle = FakeSocketIOError("middle")
+            deepest = FakeWebSocketBadStatusError("deepest")
+            outer.__cause__ = middle
+            middle.__context__ = deepest
+            self.assertEqual(
+                gate._diagnostic_exception_class(outer),
+                "WebSocketBadStatusException",
+            )
+            self.assertEqual(
+                gate._diagnostic_exception_class(Exception("unknown")),
+                "OtherException",
+            )
+
+            beyond_limit: BaseException = FakeEngineIOError("too deep")
+            for _ in range(7):
+                wrapper = Exception("wrapper")
+                wrapper.__cause__ = beyond_limit
+                beyond_limit = wrapper
+            self.assertEqual(
+                gate._diagnostic_exception_class(beyond_limit),
+                "OtherException",
+            )
+
     def test_l01_caught_exception_propagates_each_host_api_error_reason(self) -> None:
         for reason in (
             "host_api_action_invalid",
@@ -2580,7 +2677,8 @@ class N3LiveLifecycleGateTests(unittest.TestCase):
             refused_socket_diagnostic["reason_code"], "public_socket_unavailable"
         )
         self.assertEqual(
-            refused_socket_diagnostic["exception_class"], "OtherException"
+            refused_socket_diagnostic["exception_class"],
+            "SocketIOConnectionError",
         )
 
         fixture_value = "fixture-value"
@@ -3278,6 +3376,72 @@ ACTIVE_PROFILE = "n3-luna"
             gate.PublicClientError, "public_socket_snapshot_timeout"
         ):
             delayed_client.connect_player_socket(session, snapshot)
+        connect_headers = delayed_service.sockets[0].connect_kwargs["headers"]
+        self.assertIsInstance(connect_headers, Mapping)
+        self.assertFalse(
+            any(
+                isinstance(name, str) and name.casefold() == "origin"
+                for name in connect_headers
+            )
+        )
+        self.assertEqual(
+            connect_headers["Cookie"],
+            "neq_player_session=" + session.cookie,
+        )
+
+    def test_public_host_namespace_probe_requires_session_and_explicit_refusal(
+        self,
+    ) -> None:
+        service = FakePublicService()
+        client = gate.PublicUrlClient(
+            requester=service.request,
+            socket_factory=service.socket_factory,
+            timeout_seconds=0.1,
+        )
+        client.bind_invitation(service.accepted_origin)
+        with self.assertRaises(gate.PublicClientError) as no_session:
+            client.probe_host_socket_namespace()
+        self.assertEqual(no_session.exception.reason, "public_session_unavailable")
+        self.assertEqual(service.sockets, [])
+
+        challenge_response, challenge = client.login_challenge()
+        self.assertEqual(challenge_response.status, 200)
+        self.assertIsNotNone(challenge)
+        assert challenge is not None
+        self.assertIsNotNone(service.credential)
+        login_response, session = client.login(challenge, service.credential)
+        self.assertEqual(login_response.status, 200)
+        self.assertIsNotNone(session)
+        assert session is not None
+
+        self.assertTrue(client.probe_host_socket_namespace())
+        host_socket = service.sockets[-1]
+        connect_headers = host_socket.connect_kwargs["headers"]
+        self.assertIsInstance(connect_headers, Mapping)
+        self.assertFalse(
+            any(
+                isinstance(name, str) and name.casefold() == "origin"
+                for name in connect_headers
+            )
+        )
+        self.assertEqual(
+            connect_headers["Cookie"],
+            "neq_player_session=" + session.cookie,
+        )
+
+        with patch.object(
+            FakePublicSocket,
+            "connect",
+            side_effect=gate.socketio.exceptions.ConnectionError(
+                "Connection error"
+            ),
+        ):
+            with self.assertRaises(gate.PublicClientError) as plain_error:
+                client.probe_host_socket_namespace()
+        self.assertEqual(
+            plain_error.exception.reason,
+            "public_socket_observation_unavailable",
+        )
 
     def test_l04_duplicate_start_checks_generation_listener_and_owned_process(self) -> None:
         ready = {
