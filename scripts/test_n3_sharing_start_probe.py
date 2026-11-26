@@ -324,8 +324,16 @@ class ProbeTests(unittest.TestCase):
         self.assertEqual(
             [gate.PLAYER_NAMESPACE], socket_client.connect_call["namespaces"]
         )
-        self.assertEqual(
-            PLANTED_PUBLIC_ORIGIN, socket_client.connect_call["headers"]["Origin"]
+        connect_headers = socket_client.connect_call["headers"]
+        self.assertIsInstance(connect_headers, dict)
+        self.assertFalse(
+            any(
+                isinstance(name, str) and name.casefold() == "origin"
+                for name in connect_headers
+            )
+        )
+        self.assertTrue(
+            connect_headers["Cookie"].startswith("neq_player_session=")
         )
         self.assertTrue(socket_client.disconnected)
         self.assertFalse(socket_client.connected)

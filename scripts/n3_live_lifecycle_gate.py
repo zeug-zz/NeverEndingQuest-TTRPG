@@ -26,7 +26,6 @@ import re
 import shutil
 import shlex
 import signal
-import socketio
 import ssl
 import stat
 import subprocess
@@ -41,6 +40,14 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from types import MappingProxyType
 from typing import Callable, Mapping, Protocol, Sequence
+
+import engineio
+import socketio
+
+try:
+    import websocket
+except ImportError:
+    websocket = None
 
 import scripts.n3_lifecycle_gate as preflight_gate
 from web.extensions.opentunnel_sharing import native_process_info as process_info
@@ -1176,10 +1183,10 @@ class PublicUrlClient:
             client.on("player.snapshot", on_snapshot, namespace=PLAYER_NAMESPACE)
             client.connect(
                 origin.origin,
-                headers={
-                    "Origin": origin.origin,
-                    "Cookie": "neq_player_session=" + session.cookie,
-                },
+                # websocket-client derives Origin from the URL; an extra Origin
+                # is rejected as a duplicate by websockets 17.4 / python-engineio
+                # 4.15.1 / websocket-client 1.9.2.
+                headers={"Cookie": "neq_player_session=" + session.cookie},
                 auth={
                     "client_build_id": session.client_build_id,
                     "protocol_version": session.protocol_version,
@@ -1230,11 +1237,14 @@ class PublicUrlClient:
         origin = self._origin
         if origin is None:
             raise PublicClientError("public_url_invalid")
+        session = self._session
+        if not isinstance(session, PublicPlayerSession):
+            raise PublicClientError("public_session_unavailable")
         client = self._socket_factory()
         try:
             client.connect(
                 origin.origin,
-                headers={"Origin": origin.origin},
+                headers={"Cookie": "neq_player_session=" + session.cookie},
                 transports=["websocket"],
                 namespaces=["/"],
                 socketio_path="socket.io",
@@ -1245,11 +1255,7 @@ class PublicUrlClient:
         except Exception as exc:
             _disconnect_socket_quietly(client)
             text = str(exc).casefold()
-            if (
-                "one or more namespaces failed to connect" in text
-                or "namespace" in text
-                and ("/" in text or "default" in text)
-            ):
+            if "one or more namespaces failed to connect: /" in text:
                 return True
             raise PublicClientError("public_socket_observation_unavailable") from None
         connected = getattr(client, "connected", False) is True
@@ -1348,11 +1354,30 @@ class ProcessTableError(RuntimeError):
         self.reason = reason
 
 
+_WEBSOCKET_DIAGNOSTIC_EXCEPTION_CLASSES: tuple[
+    tuple[type[BaseException], str], ...
+] = ()
+if websocket is not None:
+    _websocket_bad_status_type = getattr(
+        websocket, "WebSocketBadStatusException", None
+    )
+    if (
+        isinstance(_websocket_bad_status_type, type)
+        and issubclass(_websocket_bad_status_type, BaseException)
+    ):
+        _WEBSOCKET_DIAGNOSTIC_EXCEPTION_CLASSES = (
+            (_websocket_bad_status_type, "WebSocketBadStatusException"),
+        )
+
+
 _DIAGNOSTIC_EXCEPTION_CLASSES = (
     (GateError, "GateError"),
     (HostApiError, "HostApiError"),
     (ProcessTableError, "ProcessTableError"),
     (PublicClientError, "PublicClientError"),
+    (socketio.exceptions.ConnectionError, "SocketIOConnectionError"),
+    (engineio.exceptions.ConnectionError, "EngineIOConnectionError"),
+    *_WEBSOCKET_DIAGNOSTIC_EXCEPTION_CLASSES,
     (TimeoutError, "TimeoutError"),
     (ConnectionError, "ConnectionError"),
     (FileNotFoundError, "FileNotFoundError"),
@@ -1395,18 +1420,37 @@ def _safe_row_gate_error_reason(value: object) -> str:
 def _diagnostic_exception_class(exception: BaseException | None) -> str:
     if exception is None:
         return "none"
-    exception_type = type(exception)
-    if exception_type is PublicClientError:
+    projected_label: str | None = None
+    if type(exception) is PublicClientError:
         original_exception_class = exception._original_exception_class
         if (
             type(original_exception_class) is str
             and original_exception_class in _DIAGNOSTIC_EXCEPTION_CLASS_LABELS
         ):
-            return original_exception_class
-    for known_type, label in _DIAGNOSTIC_EXCEPTION_CLASSES:
-        if exception_type is known_type:
-            return label
-    return "OtherException"
+            projected_label = original_exception_class
+
+    selected_label = projected_label
+    current: BaseException | None = exception
+    seen: set[int] = set()
+    for hop in range(7):
+        if current is None or id(current) in seen:
+            break
+        seen.add(id(current))
+        if not (hop == 0 and projected_label is not None):
+            exception_type = type(current)
+            for known_type, label in _DIAGNOSTIC_EXCEPTION_CLASSES:
+                if exception_type is known_type:
+                    selected_label = label
+                    break
+        if hop == 6:
+            break
+        cause = BaseException.__getattribute__(current, "__cause__")
+        current = (
+            cause
+            if cause is not None
+            else BaseException.__getattribute__(current, "__context__")
+        )
+    return selected_label or "OtherException"
 
 
 def _diagnostic_project_frame(
