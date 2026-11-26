@@ -41,6 +41,7 @@ EXPECTED_NAMEERRORS = set(comparison.EXPECTED_NAMEERROR_ROWS)
 class LiveGatePreflightComparisonTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
+        (PROJECT_ROOT / "tmp").mkdir(parents=True, exist_ok=True)
         cls.row_source = comparison.load_frozen_row_source()
 
     def _snapshot(

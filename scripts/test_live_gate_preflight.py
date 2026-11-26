@@ -29,6 +29,17 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+
+def setUpModule() -> None:
+    (PROJECT_ROOT / "tmp").mkdir(parents=True, exist_ok=True)
+
+
+def _require_repository_python(test_case: unittest.TestCase) -> None:
+    path = PROJECT_ROOT / ".venv" / "bin" / "python"
+    if not path.is_file():
+        test_case.skipTest("missing required path: %s" % path)
+
+
 import scripts.live_gate_preflight_stub as router_stub_module
 from scripts import live_gate_preflight_controller as preflight_controller
 from scripts import live_gate_preflight_evidence as preflight_evidence
@@ -937,6 +948,9 @@ class TestActualSP3DriverStopPolicy(unittest.TestCase):
 
 
 class TestPreflightControllerContinuation(unittest.TestCase):
+    def setUp(self) -> None:
+        _require_repository_python(self)
+
     def test_controller_continues_after_second_path_and_first_row(self) -> None:
         source_sha = "a" * 40
         run_id = "continuation-test"

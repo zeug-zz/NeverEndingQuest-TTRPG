@@ -22,6 +22,17 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+
+def setUpModule() -> None:
+    (PROJECT_ROOT / "tmp").mkdir(parents=True, exist_ok=True)
+
+
+def _require_repository_python(test_case: unittest.TestCase) -> None:
+    path = PROJECT_ROOT / ".venv" / "bin" / "python"
+    if not path.is_file():
+        test_case.skipTest("missing required path: %s" % path)
+
+
 from scripts import live_gate_preflight_comparison_identity as identity_module
 from scripts import live_gate_preflight_controller as controller
 from scripts import live_gate_preflight_run as run_module
@@ -276,6 +287,14 @@ class GatedInterfacesTests(unittest.TestCase):
 
 
 class InputAssemblyTests(unittest.TestCase):
+    def setUp(self) -> None:
+        if self._testMethodName in {
+            "test_all_26_rows_have_planned_identities_and_lifecycles",
+            "test_resume_identity_built_only_for_supplied_checkpoint",
+            "test_resolver_binds_checkpoint_creation_and_resume_to_row_identity",
+        }:
+            _require_repository_python(self)
+
     def test_all_26_rows_have_planned_identities_and_lifecycles(self) -> None:
         workers, lifecycles = run_module.build_worker_identities(
             source_sha=SHA, run_id=RUN_ID, resume_checkpoints=None,
